@@ -146,7 +146,7 @@ export function unlockFrontierFinale(quests: QuestState[]): QuestState[] {
   if (!ready) return quests;
   return quests.map((quest) =>
     quest.id === 'quest_frontier_crown' && quest.status !== 'completed'
-      ? { ...quest, status: 'active', step: Math.max(1, quest.step) }
+      ? { ...quest, status: 'active' as const, step: Math.max(1, quest.step) }
       : quest
   );
 }
