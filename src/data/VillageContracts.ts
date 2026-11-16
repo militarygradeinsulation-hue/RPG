@@ -27,7 +27,7 @@ export function makeVillageContract(
     step: 1,
     maxSteps: 2,
     description: `The people of ${settlementName} need supplies. Gather ${qty} ${config.label} and choose whether to support the community or sell your surplus.`,
-    objectives: [`Collect ${qty} ${config.label}`, 'Deliver supplies or sell them for personal profit'],
+    objectives: [`Speak with a resident of ${settlementName}`, `Collect ${qty} ${config.label}, then deliver or trade the supplies`],
     requiredItemId: config.item,
     requiredItemQty: qty,
     choices: [
