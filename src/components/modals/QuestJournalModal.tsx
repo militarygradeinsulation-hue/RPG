@@ -232,12 +232,12 @@ export const QuestJournalModal: React.FC<QuestJournalModalProps> = ({
 
               {/* Quest Cards */}
               <div className="space-y-4">
-                {quests.map((q) => (
+                {[...quests].sort((a, b) => ({ active: 0, available: 1, completed: 2 }[a.status] - { active: 0, available: 1, completed: 2 }[b.status])).map((q) => (
                   <div key={q.id} className="p-4 rounded-xl bg-slate-900/80 border border-white/10 space-y-3">
                     <div className="flex items-center justify-between gap-4">
                       <div>
                         <div className="text-xs text-amber-300/90">
-                          {q.isProphecyMain ? 'Main Prophecy' : 'Regional Quest'} · {q.biomeId} · {q.status}
+                          {q.id === 'quest_frontier_crown' ? 'Sapphire Saga Finale' : ['quest_moonveil', 'quest_thornwild', 'quest_ashen_crown', 'quest_stormglass'].includes(q.id) ? 'Sapphire Saga' : q.isProphecyMain ? 'Main Prophecy' : 'Regional Quest'} · {q.biomeId} · {q.status}
                         </div>
                         <h3 className="text-base font-bold text-white mt-0.5">{q.title}</h3>
                       </div>
@@ -267,6 +267,7 @@ export const QuestJournalModal: React.FC<QuestJournalModalProps> = ({
                             >
                               <div className="font-semibold text-white">{ch.label}</div>
                               <div className="text-slate-400">{ch.consequenceText}</div>
+                              <div className="text-amber-200/90">+{ch.rewardXp} XP · +{ch.rewardGold} Gold{ch.rewardItemId ? ' · Unique artifact' : ''}</div>
                             </button>
                           ))}
                         </div>
