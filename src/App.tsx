@@ -762,6 +762,10 @@ export default function App() {
       }));
     }
     gainXpAndGold(choice.rewardXp, choice.rewardGold);
+    if (choice.rewardItemId && ITEMS[choice.rewardItemId]) {
+      addInventoryItem(choice.rewardItemId, 1);
+      pushCombatLog(`Recovered ${ITEMS[choice.rewardItemId].name} from the Sapphire Covenant.`, 'quest');
+    }
     soundEngine.triggerCue('quest', 'Moral Choice Enacted');
     pushCombatLog(`${choice.consequenceText} (+${choice.rewardGold}g, +${choice.rewardXp} XP)`, 'quest');
   };
