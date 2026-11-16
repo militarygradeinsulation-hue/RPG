@@ -1,4 +1,4 @@
-import { advanceFrontierDiscovery, mergeQuestCatalog, unlockFrontierFinale } from './data/frontierSaga';
+import { advanceFrontierDiscovery, mergeOutpostCatalog, mergeQuestCatalog, unlockFrontierFinale } from './data/frontierSaga';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Backpack,
@@ -218,7 +218,7 @@ export default function App() {
     initialSave?.discoveredRecipes || INITIAL_RECIPES.filter((r) => r.discovered).map((r) => r.id)
   );
   const [quests, setQuests] = useState<QuestState[]>(() => mergeQuestCatalog(initialSave?.quests, INITIAL_QUESTS));
-  const [outposts, setOutposts] = useState<OutpostState[]>(initialSave?.outposts || structuredClone(INITIAL_OUTPOSTS));
+  const [outposts, setOutposts] = useState<OutpostState[]>(() => mergeOutpostCatalog(initialSave?.outposts, INITIAL_OUTPOSTS));
   const [tradeRoutes, setTradeRoutes] = useState<TradeRouteState[]>(
     initialSave?.tradeRoutes || structuredClone(INITIAL_TRADE_ROUTES)
   );
