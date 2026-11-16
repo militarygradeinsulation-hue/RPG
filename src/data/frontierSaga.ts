@@ -115,7 +115,7 @@ export function advanceFrontierDiscovery(quests: QuestState[], poiId: string): Q
   if (!questId) return quests;
   return quests.map((quest) =>
     quest.id === questId && quest.status !== 'completed'
-      ? { ...quest, status: 'active', step: Math.max(1, quest.step) }
+      ? { ...quest, status: 'active' as const, step: Math.max(1, quest.step) }
       : quest
   );
 }
