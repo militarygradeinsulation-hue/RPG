@@ -3,6 +3,7 @@ import { generateChunkBuffers } from './TerrainHeightfield';
 
 export interface TerrainWorkerRequest {
   jobId: number;
+  generation: number;
   priority?: number;
   cx: number;
   cz: number;
@@ -31,7 +32,7 @@ export interface TerrainWorkerResponse {
 // jobs so new player positions can reprioritize the worker's queue.
 const pending = new Map<string, TerrainWorkerRequest>();
 let scheduled = false;
-let latestJobId = 0;
+let latestGeneration = 0;
 
 function processNext(): void {
   scheduled = false;
@@ -86,8 +87,11 @@ self.onmessage = (e: MessageEvent<TerrainWorkerRequest>) => {
   // A full visible-set refresh supersedes older queued terrain jobs. Jobs
   // already rendering may finish, but their generation IDs are checked by
   // ChunkStreamer and cannot overwrite newer geometry.
-  if (req.jobId < latestJobId) return;
-  latestJobId = req.jobId;
+  if (req.generation < latestGeneration) return;
+  if (req.generation > latestGeneration) {
+    latestGeneration = req.generation;
+    pending.clear();
+  }
   pending.set(`${req.cx}:${req.cz}`, req);
   scheduleNext();
 };
