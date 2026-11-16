@@ -45,16 +45,24 @@ export function resolveBuildingCollision(
       let distance = Math.hypot(dx, dz);
       if (distance >= playerRadius) continue;
       if (distance < 1e-7) {
-        // Avoid indeterminate normal if a long movement ends inside a wall.
-        const left = Math.abs(from.x - minX);
-        const right = Math.abs(from.x - maxX);
-        const back = Math.abs(from.z - minZ);
-        const front = Math.abs(from.z - maxZ);
-        const smallest = Math.min(left, right, back, front);
-        if (smallest === left) { dx = -1; dz = 0; }
-        else if (smallest === right) { dx = 1; dz = 0; }
-        else if (smallest === back) { dx = 0; dz = -1; }
-        else { dx = 0; dz = 1; }
+        // Pick the wall face from the incoming position, not the nearest
+        // endpoint. An overlapping player approaching a front facade must
+        // be pushed back outside rather than sideways into its end cap.
+        if (from.z > maxZ) { dx = 0; dz = 1; }
+        else if (from.z < minZ) { dx = 0; dz = -1; }
+        else if (from.x > maxX) { dx = 1; dz = 0; }
+        else if (from.x < minX) { dx = -1; dz = 0; }
+        else {
+          const left = Math.abs(current.x - minX);
+          const right = Math.abs(current.x - maxX);
+          const back = Math.abs(current.z - minZ);
+          const front = Math.abs(current.z - maxZ);
+          const smallest = Math.min(left, right, back, front);
+          if (smallest === left) { dx = -1; dz = 0; }
+          else if (smallest === right) { dx = 1; dz = 0; }
+          else if (smallest === back) { dx = 0; dz = -1; }
+          else { dx = 0; dz = 1; }
+        }
         distance = 1;
       }
       const push = playerRadius - (distance < 1e-7 ? 0 : Math.hypot(current.x - nearestX, current.z - nearestZ));
