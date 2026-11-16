@@ -738,7 +738,7 @@ export default function App() {
     // Ignore duplicate resolutions or decisions made before finding the
     // actual objective. Unlock the finale only after all four island arcs.
     const eligible = quests.some((q) =>
-      q.id === questId && q.status === 'active' && q.step >= 1 &&
+      q.id === questId && q.status === 'active' && q.step >= (q.maxSteps === 3 ? 2 : 1) &&
       q.choices?.some((option) => option.id === choice.id)
     );
     if (!eligible) return;
