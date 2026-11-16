@@ -741,7 +741,7 @@ export default function App() {
     setQuests((prev) => unlockFrontierFinale(
       prev.map((q) =>
         q.id === questId && q.status === 'active'
-          ? { ...q, status: 'completed', step: q.maxSteps, chosenPath: choice.label }
+          ? { ...q, status: 'completed' as const, step: q.maxSteps, chosenPath: choice.label }
           : q
       )
     ));
