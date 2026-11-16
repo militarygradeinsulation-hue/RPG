@@ -129,7 +129,7 @@ export class ChunkStreamer {
         this.group.add(chunk.mesh);
         this.chunks.push(chunk);
 
-        if (Math.abs(dx) <= 1 && Math.abs(dz) <= 1) {
+        if (Math.abs(dx) === 0 && Math.abs(dz) === 0) {
           const buffers = generateChunkBuffers(wx, wz, CHUNK_SIZE, CHUNK_SEGMENTS, healths, isWinter, season);
           this.writeBuffersToGeometry(geo, buffers);
         } else {
@@ -187,6 +187,8 @@ export class ChunkStreamer {
       const wx = coord.cx * CHUNK_SIZE;
       const wz = coord.cz * CHUNK_SIZE;
       chunk.mesh.position.set(wx - originX, 0, wz - originZ);
+      // Never show an old chunk's geometry at new world coordinates.
+      chunk.mesh.visible = false;
       this.dispatchChunkJob(chunk, wx, wz, healths, isWinter, season);
     });
 
@@ -236,6 +238,7 @@ export class ChunkStreamer {
     } else {
       const buffers = generateChunkBuffers(wx, wz, CHUNK_SIZE, CHUNK_SEGMENTS, healths, isWinter, season);
       this.writeBuffersToGeometry(chunk.mesh.geometry, buffers);
+      chunk.mesh.visible = true;
     }
   }
 
@@ -245,6 +248,7 @@ export class ChunkStreamer {
     );
     if (!chunk) return;
     this.writeBuffersToGeometry(chunk.mesh.geometry, res);
+    chunk.mesh.visible = true;
   }
 
   private writeBuffersToGeometry(
