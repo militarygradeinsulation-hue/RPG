@@ -5,7 +5,7 @@ import {
   SnowShaderUniforms,
 } from '../render/MaterialLibrary';
 import { CircleCollider } from '../entities/PhysicsWorld';
-import { groundHeightAt, WATER_LEVEL } from './TerrainHeightfield';
+import { groundHeightAt, NAMED_ISLANDS, WATER_LEVEL } from './TerrainHeightfield';
 import { WORLD_POIS } from './ocean/ArchipelagoGen';
 
 export interface HarborDockAnchor {
@@ -227,6 +227,71 @@ export function buildWorldArchitectureAndHarbors(
     lighthouseBeams.push(beamPivot);
     staticColliders.push({ x: lp.x, z: lp.z, radius: 2.35, height: 16.5 });
   });
+
+  // Distant islands need an identifiable silhouette on arrival. The ancient
+  // waystones use only two instanced draw calls (no extra shadow-casting lights)
+  // and a shared set of materials to preserve frame time on lower GPU tiers.
+  const frontierIds = new Set([
+    'isle_moonveil', 'isle_thornwild', 'isle_ashen', 'isle_storm',
+  ]);
+  const frontier = NAMED_ISLANDS.filter((island) => frontierIds.has(island.id));
+  const obeliskGeometry = new THREE.CylinderGeometry(0.22, 0.95, 6.4, 5);
+  const obeliskMaterial = new THREE.MeshStandardMaterial({
+    color: 0x8e9cb0, roughness: 0.75, metalness: 0.15,
+    flatShading: true,
+  });
+  const runeGeometry = new THREE.OctahedronGeometry(1.0, 0);
+  const runeMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 1.3,
+    metalness: 0.28, roughness: 0.22,
+  });
+  const monoliths = new THREE.InstancedMesh(obeliskGeometry, obeliskMaterial, frontier.length * 6);
+  const runes = new THREE.InstancedMesh(runeGeometry, runeMaterial, frontier.length * 3);
+  const placement = new THREE.Object3D();
+  const islandColors: Record<string, number> = {
+    isle_moonveil: 0x8b9aff,
+    isle_thornwild: 0x62e0a4,
+    isle_ashen: 0xff8754,
+    isle_storm: 0x60ceff,
+  };
+
+  frontier.forEach((island, islandIndex) => {
+    const color = new THREE.Color(islandColors[island.id] ?? 0xa0d9ff);
+    // Six uneven standing stones encircle an inner triangle of glowing runes.
+    // Each stone follows the actual terrain height, avoiding buried geometry.
+    for (let i = 0; i < 6; i++) {
+      const angle = (i / 6) * Math.PI * 2 + islandIndex * 0.31;
+      const x = island.x + Math.cos(angle) * 11;
+      const z = island.z + Math.sin(angle) * 11;
+      const height = 0.72 + ((i * 7 + islandIndex * 3) % 5) * 0.13;
+      placement.position.set(x, groundHeightAt(x, z) + 3.2 * height, z);
+      placement.rotation.set(0.08 * Math.sin(i * 2), angle, 0.11 * Math.cos(i * 3));
+      placement.scale.set(1, height, 1);
+      placement.updateMatrix();
+      monoliths.setMatrixAt(islandIndex * 6 + i, placement.matrix);
+      monoliths.setColorAt(islandIndex * 6 + i, color.clone().lerp(new THREE.Color(0xb6b9c2), 0.76));
+      staticColliders.push({ x, z, radius: 0.95, height: 6.4 * height });
+    }
+    for (let i = 0; i < 3; i++) {
+      const angle = (i / 3) * Math.PI * 2;
+      const x = island.x + Math.cos(angle) * 4.8;
+      const z = island.z + Math.sin(angle) * 4.8;
+      placement.position.set(x, groundHeightAt(x, z) + 1.7, z);
+      placement.rotation.set(0, angle, Math.PI * 0.25);
+      placement.scale.setScalar(1.0 + 0.2 * i);
+      placement.updateMatrix();
+      runes.setMatrixAt(islandIndex * 3 + i, placement.matrix);
+      runes.setColorAt(islandIndex * 3 + i, color);
+    }
+  });
+  monoliths.instanceMatrix.needsUpdate = true;
+  runes.instanceMatrix.needsUpdate = true;
+  monoliths.instanceColor!.needsUpdate = true;
+  runes.instanceColor!.needsUpdate = true;
+  monoliths.computeBoundingSphere();
+  runes.computeBoundingSphere();
+  monoliths.castShadow = true;
+  group.add(monoliths, runes);
 
   // Crossroads Wooden Signposts
   [

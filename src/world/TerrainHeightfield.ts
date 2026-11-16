@@ -127,6 +127,18 @@ export function getRoadMaskAt(x: number, z: number): number {
 }
 
 export function getBiomeAt(x: number, z: number): BiomeId {
+  // The archipelago uses explicit island biome definitions. Without this
+  // override, western frost islands become Verdant and eastern Aether
+  // islands turn Ember because of the mainland quadrant lookup below.
+  for (const island of NAMED_ISLANDS) {
+    const radius = island.radius * 1.15;
+    const dx = x - island.x;
+    const dz = z - island.z;
+    if (Math.abs(dx) <= radius && Math.abs(dz) <= radius &&
+        dx * dx + dz * dz < radius * radius) {
+      return island.biome;
+    }
+  }
   const dist = Math.hypot(x, z);
   if (dist < 44) return 'suncrest';
   if (z < -36 && Math.abs(x) < Math.abs(z) * 1.15) return 'aether';
