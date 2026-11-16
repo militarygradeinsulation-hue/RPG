@@ -776,6 +776,34 @@ export const INITIAL_OUTPOSTS: OutpostState[] = [
     biomeBonus: 16,
     unlockedStock: ['crown_amulet', 'thermal_bomb'],
   },
+  {
+    id: 'outpost_moonveil', name: 'Moonveil Lantern Station', biomeId: 'aether',
+    x: -268, z: 336, level: 0,
+    requiredMaterials: [{ itemId: 'runed_stone', qty: 3 }, { itemId: 'storm_crystal', qty: 2 }],
+    defenseBonus: 24, biomeBonus: 12,
+    unlockedStock: ['aether_draught', 'frost_lotus'],
+  },
+  {
+    id: 'outpost_thornwild', name: 'Thornwild Ranger Lodge', biomeId: 'verdant',
+    x: -84, z: 417, level: 0,
+    requiredMaterials: [{ itemId: 'ancient_timber', qty: 4 }, { itemId: 'sunleaf_herb', qty: 3 }],
+    defenseBonus: 20, biomeBonus: 16,
+    unlockedStock: ['vitality_elixir', 'gale_feather'],
+  },
+  {
+    id: 'outpost_ashen', name: 'Crownfire Foundry', biomeId: 'ember',
+    x: 229, z: 377, level: 0,
+    requiredMaterials: [{ itemId: 'ember_ore', qty: 4 }, { itemId: 'runed_stone', qty: 3 }],
+    defenseBonus: 30, biomeBonus: 14,
+    unlockedStock: ['ember_greatsword', 'thermal_bomb'],
+  },
+  {
+    id: 'outpost_storm', name: 'Stormglass Wayfinder Post', biomeId: 'aether',
+    x: 40, z: 535, level: 0,
+    requiredMaterials: [{ itemId: 'storm_crystal', qty: 3 }, { itemId: 'ancient_timber', qty: 3 }],
+    defenseBonus: 26, biomeBonus: 15,
+    unlockedStock: ['aether_draught', 'crown_amulet'],
+  },
 ];
 
 export const INITIAL_TRADE_ROUTES: TradeRouteState[] = [
