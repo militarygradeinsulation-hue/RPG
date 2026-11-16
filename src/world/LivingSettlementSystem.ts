@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { PBRTextureSet } from '../render/MaterialLibrary';
 import { groundHeightAt } from './TerrainHeightfield';
+import { resolveVillageMovement } from './BuildingCollision';
 import { BuildingPlan, SettlementPlan, settlementCellAt, settlementsForCell, SETTLEMENT_CELL_SIZE } from './SettlementGenerator';
 
 /** A spatially bounded, deterministic world layer. Only nearby villages exist as 3D objects. */
@@ -28,6 +29,9 @@ export class LivingSettlementSystem {
   private lastSettlementBuild = 0;
   private readonly pendingSites = new Map<string, SettlementPlan>();
   private readonly residentDummy = new THREE.Object3D();
+  private readonly localBuildings: BuildingPlan[] = [];
+  private lastCollisionCellX = Number.NaN;
+  private lastCollisionCellZ = Number.NaN;
   private lastCellX = Number.NaN;
   private lastCellZ = Number.NaN;
   public readonly visibleSettlements: SettlementPlan[] = [];
@@ -191,6 +195,7 @@ export class LivingSettlementSystem {
       for (const [key, plan] of wanted) {
         if (!this.active.has(key)) this.pendingSites.set(key, plan);
       }
+      this.lastCollisionCellX = Number.NaN;
       this.visibleSettlements.length = 0;
       this.visibleSettlements.push(...Array.from(this.active.values(), site => site.plan));
     }
@@ -214,6 +219,7 @@ export class LivingSettlementSystem {
       }
       if (selected) {
         this.active.set(selectedKey, this.makeSettlement(selected, originX, originZ));
+        this.lastCollisionCellX = Number.NaN;
         this.pendingSites.delete(selectedKey);
         this.lastSettlementBuild = buildTime;
         this.visibleSettlements.push(selected);
@@ -261,6 +267,25 @@ export class LivingSettlementSystem {
         roof.mesh.visible = dx * dx + dz * dz > roof.radius * roof.radius;
       }
     }
+  }
+
+  /** Resolve nearby house and castle walls, allowing movement through doors. */
+  public resolvePlayerMovement(fromX: number, fromZ: number, toX: number, toZ: number): { x: number; z: number } {
+    const cx = Math.floor(toX / 16);
+    const cz = Math.floor(toZ / 16);
+    if (cx !== this.lastCollisionCellX || cz !== this.lastCollisionCellZ) {
+      this.lastCollisionCellX = cx;
+      this.lastCollisionCellZ = cz;
+      this.localBuildings.length = 0;
+      for (const settlement of this.active.values()) {
+        for (const building of settlement.plan.buildings) {
+          if (Math.abs(building.x - toX) < 36 && Math.abs(building.z - toZ) < 36) {
+            this.localBuildings.push(building);
+          }
+        }
+      }
+    }
+    return resolveVillageMovement(fromX, fromZ, toX, toZ, this.localBuildings);
   }
 
   public dispose(): void {
