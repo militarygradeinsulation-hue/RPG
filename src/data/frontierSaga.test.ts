@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
+import { INITIAL_OUTPOSTS, INITIAL_QUESTS, ITEMS } from './worldData';
 import { test } from 'node:test';
-import { FRONTIER_QUESTS, FRONTIER_DISCOVERY_QUESTS, FRONTIER_REQUIRED_QUESTS, mergeQuestCatalog, advanceFrontierDiscovery, unlockFrontierFinale } from './frontierSaga';
+import { FRONTIER_QUESTS, FRONTIER_DISCOVERY_QUESTS, FRONTIER_REQUIRED_QUESTS, mergeOutpostCatalog, mergeQuestCatalog, advanceFrontierDiscovery, unlockFrontierFinale } from './frontierSaga';
 
 test('all four outer islands have one valid discovery storyline', () => {
   const regional = FRONTIER_QUESTS.filter((quest) => quest.id !== 'quest_frontier_crown');
@@ -41,4 +42,26 @@ test('the final chapter unlocks only after all four island story choices', () =>
   const updated = unlockFrontierFinale(ready);
   assert.equal(updated.find(q => q.id === 'quest_frontier_crown')?.status, 'active');
   assert.equal(updated.find(q => q.id === 'quest_frontier_crown')?.step, 1);
+});
+
+test('all frontier artifact rewards resolve to items and every ending is collectible', () => {
+  const rewards = FRONTIER_QUESTS.flatMap(q => q.choices ?? []);
+  assert.equal(rewards.length, 10);
+  for (const choice of rewards) {
+    assert.ok(choice.rewardItemId, `Missing artifact on ${choice.id}`);
+    assert.ok(ITEMS[choice.rewardItemId], `Unknown artifact ${choice.rewardItemId}`);
+  }
+  assert.equal(INITIAL_QUESTS.filter(q => FRONTIER_QUESTS.some(f => f.id === q.id)).length, 5);
+});
+
+test('existing built outposts survive when new island settlements are installed', () => {
+  const old = [{ ...INITIAL_OUTPOSTS[0], level: 2 }];
+  const merged = mergeOutpostCatalog(old, INITIAL_OUTPOSTS);
+  assert.equal(merged.length, INITIAL_OUTPOSTS.length);
+  assert.equal(merged[0].level, 2);
+  assert.equal(new Set(merged.map(x => x.id)).size, merged.length);
+  assert.equal(mergeOutpostCatalog(merged, INITIAL_OUTPOSTS).length, merged.length);
+  for (const id of ['outpost_moonveil', 'outpost_thornwild', 'outpost_ashen', 'outpost_storm']) {
+    assert.ok(merged.find(o => o.id === id), `Missing frontier settlement ${id}`);
+  }
 });
