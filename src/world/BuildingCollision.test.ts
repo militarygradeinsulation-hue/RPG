@@ -9,8 +9,8 @@ const house: BuildingPlan = {
 };
 
 test('closed walls block entry from exterior', () => {
-  const hit = resolveBuildingCollision(53, 70, 54.1, 70, house);
-  assert.ok(hit.x >= 54.4, `expected outside wall, got ${hit.x}`);
+  const hit = resolveBuildingCollision(55.5, 70, 53.9, 70, house);
+  assert.ok(hit.x >= 54.5, `expected outside wall, got ${hit.x}`);
 });
 
 test('front doorway remains open for walking into house', () => {
