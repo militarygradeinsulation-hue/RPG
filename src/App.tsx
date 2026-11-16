@@ -1,3 +1,4 @@
+import { hasVillageContractMaterials, makeVillageContract } from './data/VillageContracts';
 import { advanceFrontierGuardian, advanceFrontierDiscovery, mergeOutpostCatalog, mergeQuestCatalog, unlockFrontierFinale } from './data/frontierSaga';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -538,6 +539,16 @@ export default function App() {
             pushCombatLog(`Discovered ${name}. A frontier story may now be available in your Quest Journal.`, 'quest');
           }
         },
+        onVillageConversation: (settlementId, name, biomeId) => {
+          const contract = makeVillageContract(settlementId, name, biomeId);
+          setQuests((prev) => {
+            if (prev.some((q) => q.id === contract.id)) return prev;
+            // Bound persistent save size even in effectively endless worlds.
+            if (prev.filter((q) => q.id.startsWith('contract:')).length >= 60) return prev;
+            return [...prev, contract];
+          });
+          pushCombatLog(`Village contract: ${name}. Check the Quest Journal for local supplies needed.`, 'quest');
+        },
         onInteractPrompt: (list) => setPrompts(list),
         onTriggerInteract: (target) => {
           if (target.kind === 'npc') setActiveNpcId(target.id);
@@ -741,7 +752,11 @@ export default function App() {
       q.id === questId && q.status === 'active' && q.step >= (q.maxSteps === 3 ? 2 : 1) &&
       q.choices?.some((option) => option.id === choice.id)
     );
-    if (!eligible) return;
+    const quest = quests.find((q) => q.id === questId);
+    if (!eligible || !quest || !hasVillageContractMaterials(quest, inventory)) return;
+    if (quest.requiredItemId && quest.requiredItemQty) {
+      addInventoryItem(quest.requiredItemId, -quest.requiredItemQty);
+    }
     setQuests((prev) => unlockFrontierFinale(
       prev.map((q) =>
         q.id === questId && q.status === 'active'
