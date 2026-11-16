@@ -1,4 +1,4 @@
-import { advanceFrontierDiscovery, mergeOutpostCatalog, mergeQuestCatalog, unlockFrontierFinale } from './data/frontierSaga';
+import { advanceFrontierGuardian, advanceFrontierDiscovery, mergeOutpostCatalog, mergeQuestCatalog, unlockFrontierFinale } from './data/frontierSaga';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Backpack,
@@ -511,7 +511,11 @@ export default function App() {
           addInventoryItem(itemId, qty);
           pushCombatLog(`Harvested ${qty}x ${ITEMS[itemId]?.name || itemId} in ${biomeId}.`, 'heal');
         },
-        onEnemyDefeated: (kind, biomeId) => {
+        onEnemyDefeated: (kind, biomeId, enemyId) => {
+          setQuests((prev) => advanceFrontierGuardian(prev, enemyId));
+          if (enemyId.startsWith('guardian_')) {
+            pushCombatLog('Frontier guardian defeated. Your Quest Journal now holds a new decision.', 'quest');
+          }
           addInventoryItem('blight_ichor', 1);
           adjustBiomeHealth(biomeId, 6);
           const journalId = kind === 'wraith' ? 'journal_wraith' : kind === 'golem' ? 'journal_golem' : 'journal_stalker';
