@@ -1,0 +1,10 @@
+{
+  "name": "Aethelgard: Prophecy of the Four Seals",
+  "description": "Open-world 3D fantasy action RPG with elemental combos, dynamic NPC schedules, biome restoration, catalyst crafting, settlement building, and offline cloud progression.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

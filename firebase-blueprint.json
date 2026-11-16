@@ -1,0 +1,180 @@
+{
+  "entities": {
+    "CloudSave": {
+      "title": "CloudSave",
+      "description": "Cross-platform cloud save slot storing player progression, biome health, faction state, inventory, quests, outposts, and skill unlocks using native maps and lists.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "slotId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "slotName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "playerLevel": {
+          "type": "number"
+        },
+        "kingdomHealth": {
+          "type": "number"
+        },
+        "moralAlignment": {
+          "type": "number"
+        },
+        "elapsedSeconds": {
+          "type": "number"
+        },
+        "season": {
+          "type": "string",
+          "enum": ["Spring", "Summer", "Autumn", "Winter"]
+        },
+        "weather": {
+          "type": "string",
+          "enum": ["Clear", "Rain", "Thunderstorm", "Ashfall", "Mist"]
+        },
+        "playerState": {
+          "type": "object"
+        },
+        "biomeHealth": {
+          "type": "object"
+        },
+        "factions": {
+          "type": "object"
+        },
+        "inventory": {
+          "type": "array"
+        },
+        "quests": {
+          "type": "object"
+        },
+        "outposts": {
+          "type": "object"
+        },
+        "seals": {
+          "type": "object"
+        },
+        "skills": {
+          "type": "array"
+        },
+        "journal": {
+          "type": "array"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "slotId",
+        "slotName",
+        "playerLevel",
+        "kingdomHealth",
+        "moralAlignment",
+        "elapsedSeconds",
+        "season",
+        "weather",
+        "playerState",
+        "biomeHealth",
+        "factions",
+        "inventory",
+        "quests",
+        "outposts",
+        "seals",
+        "skills",
+        "journal",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "LeaderboardEntry": {
+      "title": "LeaderboardEntry",
+      "description": "Public kingdom restoration efficiency leaderboard entry.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "restorationScore": {
+          "type": "number"
+        },
+        "kingdomHealth": {
+          "type": "number"
+        },
+        "elapsedSeconds": {
+          "type": "number"
+        },
+        "moralPath": {
+          "type": "string",
+          "enum": ["Light", "Balanced", "Shadow"]
+        },
+        "playerLevel": {
+          "type": "number"
+        },
+        "sealsRestored": {
+          "type": "number"
+        },
+        "isPublic": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "displayName",
+        "restorationScore",
+        "kingdomHealth",
+        "elapsedSeconds",
+        "moralPath",
+        "playerLevel",
+        "sealsRestored",
+        "isPublic",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/saves/{saveId}": {
+      "schema": {
+        "$ref": "#/entities/CloudSave"
+      },
+      "description": "Private cloud save slots owned by the authenticated user."
+    },
+    "/leaderboard/{entryId}": {
+      "schema": {
+        "$ref": "#/entities/LeaderboardEntry"
+      },
+      "description": "Global restoration leaderboard entries readable by players and writable only by the entry owner."
+    }
+  }
+}

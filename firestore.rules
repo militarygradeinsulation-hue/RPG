@@ -1,0 +1,138 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isValidCloudSave(data) {
+      return data.keys().hasAll([
+          'ownerId', 'slotId', 'slotName', 'playerLevel', 'kingdomHealth',
+          'moralAlignment', 'elapsedSeconds', 'season', 'weather',
+          'playerState', 'biomeHealth', 'factions', 'inventory', 'quests',
+          'outposts', 'seals', 'skills', 'journal', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'slotId', 'slotName', 'playerLevel', 'kingdomHealth',
+          'moralAlignment', 'elapsedSeconds', 'season', 'weather',
+          'playerState', 'biomeHealth', 'factions', 'inventory', 'quests',
+          'outposts', 'seals', 'skills', 'journal', 'createdAt', 'updatedAt'
+        ])
+        && data.ownerId is string && data.ownerId == request.auth.uid && isValidId(data.ownerId)
+        && data.slotId is string && data.slotId.size() >= 1 && data.slotId.size() <= 64 && data.slotId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.slotName is string && data.slotName.size() >= 1 && data.slotName.size() <= 64
+        && data.playerLevel is number && data.playerLevel >= 1 && data.playerLevel <= 99
+        && data.kingdomHealth is number && data.kingdomHealth >= 0 && data.kingdomHealth <= 100
+        && data.moralAlignment is number && data.moralAlignment >= -100 && data.moralAlignment <= 100
+        && data.elapsedSeconds is number && data.elapsedSeconds >= 0 && data.elapsedSeconds <= 10000000
+        && data.season in ['Spring', 'Summer', 'Autumn', 'Winter']
+        && data.weather in ['Clear', 'Rain', 'Thunderstorm', 'Ashfall', 'Mist']
+        && data.playerState is map && data.playerState.keys().size() <= 20
+        && data.biomeHealth is map && data.biomeHealth.keys().size() <= 10
+        && data.factions is map && data.factions.keys().size() <= 10
+        && data.inventory is list && data.inventory.size() <= 40
+        && data.quests is map && data.quests.keys().size() <= 20
+        && data.outposts is map && data.outposts.keys().size() <= 10
+        && data.seals is map && data.seals.keys().size() <= 10
+        && data.skills is list && data.skills.size() <= 24
+        && (data.skills.size() == 0 || data.skills[0] is string)
+        && data.journal is list && data.journal.size() <= 30
+        && (data.journal.size() == 0 || data.journal[0] is string)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidLeaderboardEntry(data) {
+      return data.keys().hasAll([
+          'ownerId', 'displayName', 'restorationScore', 'kingdomHealth',
+          'elapsedSeconds', 'moralPath', 'playerLevel', 'sealsRestored',
+          'isPublic', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'displayName', 'restorationScore', 'kingdomHealth',
+          'elapsedSeconds', 'moralPath', 'playerLevel', 'sealsRestored',
+          'isPublic', 'createdAt', 'updatedAt'
+        ])
+        && data.ownerId is string && data.ownerId == request.auth.uid && isValidId(data.ownerId)
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 40
+        && data.restorationScore is number && data.restorationScore >= 0 && data.restorationScore <= 1000000
+        && data.kingdomHealth is number && data.kingdomHealth >= 0 && data.kingdomHealth <= 100
+        && data.elapsedSeconds is number && data.elapsedSeconds >= 0 && data.elapsedSeconds <= 10000000
+        && data.moralPath in ['Light', 'Balanced', 'Shadow']
+        && data.playerLevel is number && data.playerLevel >= 1 && data.playerLevel <= 99
+        && data.sealsRestored is number && data.sealsRestored >= 0 && data.sealsRestored <= 4
+        && data.isPublic is bool && data.isPublic == true
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /users/{userId}/saves/{saveId} {
+      allow get: if isSignedIn() && userId == request.auth.uid && isValidId(userId) && isValidId(saveId);
+      allow list: if isSignedIn() && userId == request.auth.uid && resource.data.ownerId == request.auth.uid;
+      allow create: if isSignedIn()
+        && userId == request.auth.uid
+        && isValidId(userId)
+        && isValidId(saveId)
+        && isValidCloudSave(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isSignedIn()
+        && userId == request.auth.uid
+        && isValidId(userId)
+        && isValidId(saveId)
+        && isValidCloudSave(incoming())
+        && incoming().ownerId == existing().ownerId
+        && incoming().slotId == existing().slotId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'slotName', 'playerLevel', 'kingdomHealth', 'moralAlignment',
+          'elapsedSeconds', 'season', 'weather', 'playerState',
+          'biomeHealth', 'factions', 'inventory', 'quests', 'outposts',
+          'seals', 'skills', 'journal', 'updatedAt'
+        ]);
+      allow delete: if isSignedIn() && userId == request.auth.uid && isValidId(userId) && isValidId(saveId);
+    }
+
+    match /leaderboard/{entryId} {
+      allow get: if isValidId(entryId) && existing().isPublic == true;
+      allow list: if resource.data.isPublic == true;
+      allow create: if isSignedIn()
+        && isValidId(entryId)
+        && entryId == request.auth.uid
+        && isValidLeaderboardEntry(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isSignedIn()
+        && isValidId(entryId)
+        && entryId == request.auth.uid
+        && existing().ownerId == request.auth.uid
+        && isValidLeaderboardEntry(incoming())
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'restorationScore', 'kingdomHealth',
+          'elapsedSeconds', 'moralPath', 'playerLevel', 'sealsRestored',
+          'isPublic', 'updatedAt'
+        ]);
+      allow delete: if isSignedIn() && isValidId(entryId) && existing().ownerId == request.auth.uid;
+    }
+  }
+}

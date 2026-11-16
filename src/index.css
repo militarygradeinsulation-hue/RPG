@@ -1,0 +1,105 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --font-display: 'Cinzel', Georgia, serif;
+    --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --hud-surface: rgba(11, 15, 23, 0.92);
+    --hud-surface-elevated: rgba(18, 24, 38, 0.96);
+    --hud-border: rgba(255, 255, 255, 0.14);
+    --hud-text: #f1f5f9;
+    --hud-muted: #94a3b8;
+    --accent-primary: #f59e0b;
+    --accent-emerald: #10b981;
+    --accent-crimson: #ef4444;
+    --accent-sky: #38bdf8;
+  }
+
+  /* High-Contrast Accessibility Mode */
+  html.theme-high-contrast {
+    --hud-surface: #000000;
+    --hud-surface-elevated: #0a0a0a;
+    --hud-border: #ffffff;
+    --hud-text: #ffffff;
+    --hud-muted: #e2e8f0;
+    --accent-primary: #fde047;
+    --accent-emerald: #4ade80;
+    --accent-crimson: #ff6b6b;
+    --accent-sky: #60a5fa;
+  }
+
+  /* Colorblind-Safe (Okabe-Ito inspired) Mode */
+  html.theme-colorblind {
+    --hud-surface: rgba(12, 16, 26, 0.94);
+    --hud-surface-elevated: rgba(20, 26, 40, 0.97);
+    --hud-border: rgba(255, 255, 255, 0.22);
+    --hud-text: #f8fafc;
+    --hud-muted: #cbd5e1;
+    --accent-primary: #e69f00;
+    --accent-emerald: #0072b2;
+    --accent-crimson: #d55e00;
+    --accent-sky: #56b4e9;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    color: var(--hud-text);
+  }
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.font-mono-tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-panel {
+  background-color: var(--hud-surface);
+  border: 1px solid var(--hud-border);
+  color: var(--hud-text);
+}
+
+.hud-modal {
+  background-color: var(--hud-surface-elevated);
+  border: 1px solid var(--hud-border);
+  color: var(--hud-text);
+}
+
+/* Text scaling options */
+html.text-scale-115 {
+  font-size: 18.4px;
+}
+
+html.text-scale-130 {
+  font-size: 20.8px;
+}
+
+/* Reduced motion compliance */
+html.reduced-motion *,
+html.reduced-motion *::before,
+html.reduced-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+}
+
+/* Custom subtle scrollbars for modals */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.4);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.35);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(245, 158, 11, 0.6);
+}
