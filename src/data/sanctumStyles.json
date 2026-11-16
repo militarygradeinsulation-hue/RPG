@@ -1,0 +1,6 @@
+{
+  "suncrest": { "stone": "#a8997e", "accent": "#ffd487", "rings": 4, "sides": 64 },
+  "verdant": { "stone": "#526a5d", "accent": "#80efba", "rings": 3, "sides": 32 },
+  "ember": { "stone": "#574b52", "accent": "#ff8751", "rings": 5, "sides": 8 },
+  "aether": { "stone": "#657396", "accent": "#9bbdff", "rings": 4, "sides": 6 }
+}

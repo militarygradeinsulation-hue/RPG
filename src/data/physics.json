@@ -30,5 +30,13 @@
     "mud": 0.6,
     "water": 0.75,
     "metal": 1.0
+  },
+  "motion": {
+    "accelerationResponse": 10,
+    "brakingResponse": 16,
+    "cameraTargetResponse": 10,
+    "cameraPositionResponse": 13,
+    "turnResponse": 14,
+    "teleportThresholdM": 20
   }
 }

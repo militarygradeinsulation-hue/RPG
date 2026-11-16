@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { CSM } from 'three/addons/csm/CSM.js';
 import { soundEngine } from '../audio/soundEngine';
 import physicsConfig from '../data/physics.json';
+import sanctumStyles from '../data/sanctumStyles.json';
+import { createSanctumInlays } from '../world/SanctumDetails';
 import elementReactions from '../data/element_reactions.json';
 import { FloatingOrigin } from '../core/FloatingOrigin';
 import { FixedStepLoop } from '../core/GameLoop';
@@ -352,11 +354,16 @@ export class WorldEngine {
   private readonly lastAnimPos = new THREE.Vector3();
   private lastAnimYaw = 0;
   /** Player position at the start of the latest fixed step, for render interpolation. */
-  private readonly prevSimPos = new THREE.Vector3(Number.NaN, 0, 0);
-  private renderAlpha = 1;
-  private readonly renderPos = new THREE.Vector3();
   private playerSquashY = 1;
   private lastFootstepPhase = 0;
+
+  private readonly previousPlayerPosition = new THREE.Vector3();
+  private readonly renderedPlayerPosition = new THREE.Vector3();
+  private readonly movementVelocity = new THREE.Vector2();
+  private motionReady = false;
+  private cameraNeedsSnap = true;
+  private cameraOriginX = 0;
+  private cameraOriginZ = 0;
 
   private cameraYaw = 0;
   private cameraPitch = 0.36;
@@ -638,6 +645,9 @@ export class WorldEngine {
     plinthPos(plaza, 0, plazaY + 0.15, 0);
     plaza.receiveShadow = true;
     this.overworldGroup.add(plaza);
+    const plazaInlays = createSanctumInlays('suncrest', 12);
+    plazaInlays.position.set(0, plazaY + 0.482, 0);
+    this.overworldGroup.add(plazaInlays);
 
     // Four Outer Seal Pillars around the Sanctuary Plaza
     const pillarMat = stoneMat;
@@ -1031,6 +1041,8 @@ export class WorldEngine {
 
   public setGameMode(mode: EngineGameMode) {
     this.gameMode = mode;
+    this.motionReady = false;
+    this.movementVelocity.set(0, 0);
     this.input.setEnabled(mode === 'playing');
   }
 
@@ -1356,6 +1368,9 @@ export class WorldEngine {
     this.playerState.z = z;
     this.playerState.y = Math.max(y, WATER_LEVEL + 0.35);
     this.velocityY = 0;
+    this.motionReady = false;
+    this.cameraNeedsSnap = true;
+    this.movementVelocity.set(0, 0);
     this.origin.update(x, z, [
       this.chunkStreamer.group,
       this.vegetation.group,
@@ -1791,6 +1806,10 @@ export class WorldEngine {
   public lootDungeonChest(chestId: string) {
     const chest = this.dungeonChests.find((c) => c.id === chestId && !c.opened);
     if (!chest) return;
+    if (this.dungeonEnemies.some((enemy) => enemy.alive)) {
+      this.callbacks.onCombatLog('Defeat the sanctum guardians to release the relic seal.', 'warning');
+      return;
+    }
     chest.opened = true;
     chest.mesh.scale.setScalar(0.82);
     soundEngine.triggerCue('quest', 'Relic Chest Looted');
@@ -1816,6 +1835,9 @@ export class WorldEngine {
     this.playerState.z = 8;
     this.playerState.y = 0.2;
     this.velocityY = 0;
+    this.motionReady = false;
+    this.cameraNeedsSnap = true;
+    this.movementVelocity.set(0, 0);
     this.playerModel.group.position.set(0, 0.2, 8);
     this.skyWeather.fog.color.setHex(0x070a12);
     this.skyWeather.fog.density = 0.024;
@@ -1836,6 +1858,19 @@ export class WorldEngine {
   }
 
   private clearDungeonInterior() {
+    const geometries = new Set<THREE.BufferGeometry>();
+    const materials = new Set<THREE.Material>();
+    for (const child of this.dungeonGroup.children) {
+      if (!child.userData.ownedSanctumDetail) continue;
+      child.traverse((object) => {
+        if (!(object instanceof THREE.Mesh)) return;
+        geometries.add(object.geometry);
+        const list = Array.isArray(object.material) ? object.material : [object.material];
+        list.forEach((material) => materials.add(material));
+      });
+    }
+    geometries.forEach((geometry) => geometry.dispose());
+    materials.forEach((material) => material.dispose());
     while (this.dungeonGroup.children.length > 0) {
       this.dungeonGroup.remove(this.dungeonGroup.children[0]);
     }
@@ -1851,7 +1886,7 @@ export class WorldEngine {
       roughnessMap: this.stonePbr.roughnessMap,
       roughness: 0.88,
       metalness: 0.12,
-      color: 0x64748b,
+      color: sanctumStyles[portal.biomeId].stone,
     });
     const accentMat = new THREE.MeshStandardMaterial({
       color: portal.accentHex,
@@ -1867,6 +1902,18 @@ export class WorldEngine {
     ceiling.rotation.x = Math.PI / 2;
     ceiling.position.set(0, 9.5, -16);
     this.dungeonGroup.add(floor, ceiling);
+    const arenaInlays = createSanctumInlays(portal.biomeId, 8);
+    arenaInlays.position.set(0, 0.018, -32);
+    this.dungeonGroup.add(arenaInlays);
+    // An illuminated central route makes the exit and arena readable in the dark.
+    const pathGeo = new THREE.PlaneGeometry(0.08, 49);
+    for (const x of [-2.8, 2.8]) {
+      const strip = new THREE.Mesh(pathGeo, accentMat);
+      strip.userData.ownedSanctumDetail = true;
+      strip.rotation.x = -Math.PI / 2;
+      strip.position.set(x, 0.012, -15);
+      this.dungeonGroup.add(strip);
+    }
 
     [
       { w: 42, h: 10, d: 2, x: 0, z: 14 },
@@ -2068,17 +2115,16 @@ export class WorldEngine {
       (fixedDt) => {
         if (this.gameMode === 'playing') {
           if (this.hitstopTimer > 0) {
+            this.previousPlayerPosition.set(this.playerState.x, this.playerState.y, this.playerState.z);
             this.hitstopTimer = Math.max(0, this.hitstopTimer - fixedDt);
             return;
           }
-          this.prevSimPos.set(this.playerState.x, this.playerState.y, this.playerState.z);
           this.stepSimulation(fixedDt);
         }
       },
       (frameDt, alpha, smoothedMs) => {
-        this.renderAlpha = this.gameMode === 'playing' ? alpha : 1;
         this.clockState.step(frameDt, this.gameMode === 'playing');
-        this.updateAtmosphereAndVisuals(frameDt);
+        this.updateAtmosphereAndVisuals(frameDt, alpha);
         this.updateAdaptivePerformance(smoothedMs);
         this.renderFrame();
 
@@ -2099,6 +2145,8 @@ export class WorldEngine {
   };
 
   private stepSimulation(dt: number) {
+    this.previousPlayerPosition.set(this.playerState.x, this.playerState.y, this.playerState.z);
+    this.motionReady = true;
     const elapsed = this.clockState.elapsedPlaySeconds;
     const keys = this.input.keys;
 
@@ -2376,6 +2424,7 @@ export class WorldEngine {
     }
 
     if (this.playerState.isClimbing && nearTower) {
+      this.movementVelocity.set(0, 0);
       this.playerState.y = Math.min(nearTower.topY, this.playerState.y + dt * 4.5);
       this.velocityY = 0;
       return;
@@ -2398,6 +2447,14 @@ export class WorldEngine {
     const dirX = this.dodgeTimer > 0 ? this.dodgeDirX : moveDirX;
     const dirZ = this.dodgeTimer > 0 ? this.dodgeDirZ : moveDirZ;
 
+    const response = len > 0 ? physicsConfig.motion.accelerationResponse : physicsConfig.motion.brakingResponse;
+    const blend = 1 - Math.exp(-response * dt);
+    if (this.dodgeTimer > 0) this.movementVelocity.set(dirX * speed, dirZ * speed);
+    else {
+      this.movementVelocity.x += (dirX * speed - this.movementVelocity.x) * blend;
+      this.movementVelocity.y += (dirZ * speed - this.movementVelocity.y) * blend;
+    }
+
     const res = stepPlayerPhysics({
       dt,
       elapsed,
@@ -2405,9 +2462,9 @@ export class WorldEngine {
       y: this.playerState.y,
       z: this.playerState.z,
       vy: this.velocityY,
-      moveDirX: dirX,
-      moveDirZ: dirZ,
-      speed,
+      moveDirX: this.movementVelocity.x,
+      moveDirZ: this.movementVelocity.y,
+      speed: 1,
       isGrounded: this.isGrounded,
       isCrouching: this.isCrouching,
       isClimbing: this.playerState.isClimbing,
@@ -2463,7 +2520,7 @@ export class WorldEngine {
       let diff = targetRot - this.playerModel.group.rotation.y;
       while (diff > Math.PI) diff -= Math.PI * 2;
       while (diff < -Math.PI) diff += Math.PI * 2;
-      this.playerModel.group.rotation.y += diff * Math.min(1, dt * 14);
+      this.playerModel.group.rotation.y += diff * (1 - Math.exp(-physicsConfig.motion.turnResponse * dt));
       this.walkPhase += dt * (sprinting ? 14 : 9.5);
     }
 
@@ -2714,16 +2771,24 @@ export class WorldEngine {
     void elapsed;
   }
 
-  private updateAtmosphereAndVisuals(dt: number) {
-    const elapsed = this.clockState.elapsedPlaySeconds;
-    // Interpolate between the last two fixed simulation steps so motion is smooth at any refresh rate.
-    const cur = this.renderPos.set(this.playerState.x, this.playerState.y, this.playerState.z);
-    if (Number.isFinite(this.prevSimPos.x) && this.prevSimPos.distanceToSquared(cur) < 25) {
-      cur.lerpVectors(this.prevSimPos, cur, this.renderAlpha);
+  private updateAtmosphereAndVisuals(dt: number, alpha: number) {
+    const current = this.renderedPlayerPosition.set(this.playerState.x, this.playerState.y, this.playerState.z);
+    const jumped = this.previousPlayerPosition.distanceToSquared(current) > physicsConfig.motion.teleportThresholdM ** 2;
+    if (this.motionReady && !jumped && this.gameMode === 'playing' && this.hitstopTimer <= 0) {
+      current.lerpVectors(this.previousPlayerPosition, current, alpha);
     }
-    const rY = cur.y;
-    const plx = this.activeDungeon ? cur.x : this.origin.toLocalX(cur.x);
-    const plz = this.activeDungeon ? cur.z : this.origin.toLocalZ(cur.z);
+    if (!this.motionReady || jumped) this.lastAnimPos.copy(current);
+    const nextOriginX = this.activeDungeon ? 0 : this.origin.originX;
+    const nextOriginZ = this.activeDungeon ? 0 : this.origin.originZ;
+    this.smoothCamTarget.x -= nextOriginX - this.cameraOriginX;
+    this.smoothCamTarget.z -= nextOriginZ - this.cameraOriginZ;
+    this.smoothCamPos.x -= nextOriginX - this.cameraOriginX;
+    this.smoothCamPos.z -= nextOriginZ - this.cameraOriginZ;
+    this.cameraOriginX = nextOriginX;
+    this.cameraOriginZ = nextOriginZ;
+    const elapsed = this.clockState.elapsedPlaySeconds;
+    const plx = this.activeDungeon ? current.x : this.origin.toLocalX(current.x);
+    const plz = this.activeDungeon ? current.z : this.origin.toLocalZ(current.z);
 
     // 1. Update Camera & Smooth Spring Target
     const camDelta = this.input.consumeCameraDelta();
@@ -2742,9 +2807,10 @@ export class WorldEngine {
     const activeShip = this.atHelmShipId ? this.ships.find((s) => s.id === this.atHelmShipId) : null;
     const lookAnchorX = activeShip ? this.origin.toLocalX(activeShip.x) : plx;
     const lookAnchorZ = activeShip ? this.origin.toLocalZ(activeShip.z) : plz;
-    const lookAnchorY = activeShip ? activeShip.y + 3.2 : rY + (this.isCrouching ? 1.15 : 1.75);
+    const lookAnchorY = activeShip ? activeShip.y + 3.2 : current.y + (this.isCrouching ? 1.15 : 1.75);
 
-    this.smoothCamTarget.lerp(this.tmpCamVec.set(lookAnchorX, lookAnchorY, lookAnchorZ), 1 - Math.exp(-dt * 12));
+    if (this.cameraNeedsSnap) this.smoothCamTarget.set(lookAnchorX, lookAnchorY, lookAnchorZ);
+    this.smoothCamTarget.lerp(this.tmpCamVec.set(lookAnchorX, lookAnchorY, lookAnchorZ), 1 - Math.exp(-physicsConfig.motion.cameraTargetResponse * dt));
 
     const horizDist = Math.cos(this.cameraPitch) * this.cameraDist;
     const desiredCamX = this.smoothCamTarget.x + Math.sin(this.cameraYaw) * horizDist;
@@ -2766,8 +2832,10 @@ export class WorldEngine {
     });
     this.smoothCamPos.lerp(
       this.tmpCamVec.set(resolvedCamWorld.x - ox, resolvedCamWorld.y, resolvedCamWorld.z - oz),
-      1 - Math.exp(-dt * 14)
+      this.cameraNeedsSnap ? 1 : 1 - Math.exp(-physicsConfig.motion.cameraPositionResponse * dt)
     );
+
+    this.cameraNeedsSnap = false;
 
     if (this.screenShake > 0) {
       this.screenShake = Math.max(0, this.screenShake - dt * 1.8);
@@ -2782,15 +2850,15 @@ export class WorldEngine {
     this.camera.lookAt(this.smoothCamTarget);
 
     // 2. Player Procedural Rig Animation (Walk / Swim / Crouch / Block / Attack)
-    this.playerModel.group.position.set(plx, rY, plz);
+    this.playerModel.group.position.set(plx, current.y, plz);
     this.playerSquashY = THREE.MathUtils.lerp(this.playerSquashY, 1.0, Math.min(1, dt * 12));
     this.playerModel.bodyPivot.scale.set(1, this.playerSquashY, 1);
 
     // Real ground speed from position change (world units/s), mapped to the rig's gait scale.
     // Game run speed 7.8 -> jog, sprint 12.6 -> full sprint.
-    const pdx = cur.x - this.lastAnimPos.x;
-    const pdz = cur.z - this.lastAnimPos.z;
-    this.lastAnimPos.copy(cur);
+    const pdx = current.x - this.lastAnimPos.x;
+    const pdz = current.z - this.lastAnimPos.z;
+    this.lastAnimPos.copy(current);
     const groundSpeed = dt > 0 ? Math.min(30, Math.hypot(pdx, pdz) / dt) : 0;
     const turnDelta = this.playerModel.group.rotation.y - this.lastAnimYaw;
     this.lastAnimYaw = this.playerModel.group.rotation.y;
@@ -2922,7 +2990,7 @@ export class WorldEngine {
         const d = Math.hypot(c.x - px, c.z - pz);
         if (d < 6) {
           const sc = project(c.x, 1.3, c.z);
-          if (sc) prompts.push({ id: c.id, kind: 'chest', label: 'Relic Chest', actionHint: '[E] Loot', color: '#fbbf24', screenX: sc.sx, screenY: sc.sy, distance: d });
+          if (sc) prompts.push({ id: c.id, kind: 'chest', label: 'Relic Chest', actionHint: this.dungeonEnemies.some((enemy) => enemy.alive) ? 'Defeat guardians to unlock' : '[E] Loot', color: '#fbbf24', screenX: sc.sx, screenY: sc.sy, distance: d });
         }
       });
     } else if (!this.atHelmShipId) {
