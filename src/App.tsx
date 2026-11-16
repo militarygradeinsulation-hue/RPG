@@ -1928,7 +1928,7 @@ export default function App() {
                 }}
                 className="w-full py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold"
               >
-                World Atlas (Google Maps)
+                World Atlas & Sea Chart
               </button>
               <button
                 type="button"

@@ -39,11 +39,6 @@ async function startServer() {
   const app = express();
   app.use(express.json({ limit: '25mb' }));
 
-  // Google Maps provisioned key resolver (never hardcode keys)
-  app.get('/api/maps-config', (_req, res) => {
-    const apiKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || '';
-    res.json({ apiKey });
-  });
 
   // Google Search Grounded Lore & Real-World Ecology Oracle (gemini-4-hydrogen)
   app.post('/api/search-lore', async (req, res) => {
