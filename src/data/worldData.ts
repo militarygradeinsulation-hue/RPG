@@ -1,3 +1,4 @@
+import { FRONTIER_QUESTS } from './frontierSaga';
 import {
   BiomeId,
   BiomeState,
@@ -700,6 +701,7 @@ export const INITIAL_QUESTS: QuestState[] = [
       },
     ],
   },
+  ...FRONTIER_QUESTS,
 ];
 
 export const INITIAL_OUTPOSTS: OutpostState[] = [
