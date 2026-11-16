@@ -177,9 +177,14 @@ export function stepPlayerPhysics(params: {
         if (Math.abs(delta) < reach) {
           // Prefer the incoming side if we start inside an obstacle.
           const start = axis === 'x' ? x : z;
-          const sign = Math.abs(delta) > 1e-6
-            ? Math.sign(delta)
-            : (start < center ? -1 : 1);
+          const startDelta = start - center;
+          // Do not tunnel through a collider when a frame's proposed
+          // movement crosses its centre. Resolve toward the entry side.
+          const sign = Math.abs(startDelta) >= reach - 1e-4
+            ? Math.sign(startDelta)
+            : Math.abs(delta) > 1e-6
+              ? Math.sign(delta)
+              : (startDelta < 0 ? -1 : 1);
           value = center + sign * reach;
         }
       }
