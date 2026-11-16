@@ -1,3 +1,4 @@
+import { advanceFrontierGuardian, advanceFrontierDiscovery, mergeOutpostCatalog, mergeQuestCatalog, unlockFrontierFinale } from './data/frontierSaga';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Backpack,
@@ -216,8 +217,8 @@ export default function App() {
   const [discoveredRecipes, setDiscoveredRecipes] = useState<string[]>(
     initialSave?.discoveredRecipes || INITIAL_RECIPES.filter((r) => r.discovered).map((r) => r.id)
   );
-  const [quests, setQuests] = useState<QuestState[]>(initialSave?.quests || structuredClone(INITIAL_QUESTS));
-  const [outposts, setOutposts] = useState<OutpostState[]>(initialSave?.outposts || structuredClone(INITIAL_OUTPOSTS));
+  const [quests, setQuests] = useState<QuestState[]>(() => mergeQuestCatalog(initialSave?.quests, INITIAL_QUESTS));
+  const [outposts, setOutposts] = useState<OutpostState[]>(() => mergeOutpostCatalog(initialSave?.outposts, INITIAL_OUTPOSTS));
   const [tradeRoutes, setTradeRoutes] = useState<TradeRouteState[]>(
     initialSave?.tradeRoutes || structuredClone(INITIAL_TRADE_ROUTES)
   );
@@ -510,7 +511,11 @@ export default function App() {
           addInventoryItem(itemId, qty);
           pushCombatLog(`Harvested ${qty}x ${ITEMS[itemId]?.name || itemId} in ${biomeId}.`, 'heal');
         },
-        onEnemyDefeated: (kind, biomeId) => {
+        onEnemyDefeated: (kind, biomeId, enemyId) => {
+          setQuests((prev) => advanceFrontierGuardian(prev, enemyId));
+          if (enemyId.startsWith('guardian_')) {
+            pushCombatLog('Frontier guardian defeated. Your Quest Journal now holds a new decision.', 'quest');
+          }
           addInventoryItem('blight_ichor', 1);
           adjustBiomeHealth(biomeId, 6);
           const journalId = kind === 'wraith' ? 'journal_wraith' : kind === 'golem' ? 'journal_golem' : 'journal_stalker';
@@ -526,6 +531,12 @@ export default function App() {
           const jId = map[biomeId];
           setJournal((prev) => prev.map((j) => (j.id === jId ? { ...j, discovered: true } : j)));
           pushCombatLog(`Entered ${INITIAL_BIOMES[biomeId].name} — Journal sketch recorded.`, 'world');
+        },
+        onPoiDiscover: (poiId, name) => {
+          setQuests((prev) => advanceFrontierDiscovery(prev, poiId));
+          if (poiId.startsWith('poi_isle_')) {
+            pushCombatLog(`Discovered ${name}. A frontier story may now be available in your Quest Journal.`, 'quest');
+          }
         },
         onInteractPrompt: (list) => setPrompts(list),
         onTriggerInteract: (target) => {
@@ -724,11 +735,20 @@ export default function App() {
   };
 
   const handleResolveQuestChoice = (questId: string, choice: QuestChoice) => {
-    setQuests((prev) =>
-      prev.map((q) =>
-        q.id === questId ? { ...q, status: 'completed', step: q.maxSteps, chosenPath: choice.label } : q
-      )
+    // Ignore duplicate resolutions or decisions made before finding the
+    // actual objective. Unlock the finale only after all four island arcs.
+    const eligible = quests.some((q) =>
+      q.id === questId && q.status === 'active' && q.step >= (q.maxSteps === 3 ? 2 : 1) &&
+      q.choices?.some((option) => option.id === choice.id)
     );
+    if (!eligible) return;
+    setQuests((prev) => unlockFrontierFinale(
+      prev.map((q) =>
+        q.id === questId && q.status === 'active'
+          ? { ...q, status: 'completed' as const, step: q.maxSteps, chosenPath: choice.label }
+          : q
+      )
+    ));
     setPlayer((prev) => ({
       ...prev,
       moralAlignment: Math.max(-100, Math.min(100, prev.moralAlignment + choice.moralDelta)),
@@ -746,6 +766,10 @@ export default function App() {
       }));
     }
     gainXpAndGold(choice.rewardXp, choice.rewardGold);
+    if (choice.rewardItemId && ITEMS[choice.rewardItemId]) {
+      addInventoryItem(choice.rewardItemId, 1);
+      pushCombatLog(`Recovered ${ITEMS[choice.rewardItemId].name} from the Sapphire Covenant.`, 'quest');
+    }
     soundEngine.triggerCue('quest', 'Moral Choice Enacted');
     pushCombatLog(`${choice.consequenceText} (+${choice.rewardGold}g, +${choice.rewardXp} XP)`, 'quest');
   };

@@ -54,6 +54,7 @@ import { ChunkStreamer } from '../world/ChunkStreamer';
 import { buildWorldArchitectureAndHarbors, HarborDockAnchor } from '../world/POIGenerator';
 import { getBiomeAt, groundHeightAt, isWaterAt, WATER_LEVEL } from '../world/TerrainHeightfield';
 import { VegetationSystem } from '../world/VegetationSystem';
+import { LivingSettlementSystem } from '../world/LivingSettlementSystem';
 import { generateSeaWrecks, SalvageWreckDef, WORLD_POIS } from '../world/ocean/ArchipelagoGen';
 import { OceanSurface } from '../world/ocean/OceanSurface';
 import { OceanWaveSampler } from '../world/ocean/OceanWaveSampler';
@@ -200,8 +201,9 @@ export interface WorldCallbacks {
   onPlayerStatsUpdate: (patch: Partial<PlayerState>) => void;
   onGainXpAndGold: (xp: number, gold: number) => void;
   onHarvestItem: (itemId: string, qty: number, biomeId: BiomeId) => void;
-  onEnemyDefeated: (kind: 'wraith' | 'golem' | 'stalker', biomeId: BiomeId) => void;
+  onEnemyDefeated: (kind: 'wraith' | 'golem' | 'stalker', biomeId: BiomeId, enemyId: string) => void;
   onBiomeDiscover: (biomeId: BiomeId) => void;
+  onPoiDiscover: (poiId: string, name: string) => void;
   onInteractPrompt: (prompts: NearbyPrompt[]) => void;
   onTriggerInteract: (target: { kind: NearbyPrompt['kind']; id: string }) => void;
   onHudTick: (info: {
@@ -261,6 +263,7 @@ export class WorldEngine {
   private oceanSurface!: OceanSurface;
   private chunkStreamer!: ChunkStreamer;
   private vegetation!: VegetationSystem;
+  private livingSettlements!: LivingSettlementSystem;
   private seaLife!: SeaLifeSystem;
 
   private readonly snowUniforms: SnowShaderUniforms = {
@@ -287,6 +290,7 @@ export class WorldEngine {
   private currentBiome: BiomeId = 'suncrest';
   private readonly discoveredBiomes = new Set<BiomeId>(['suncrest']);
   private readonly discoveredPois = new Set<string>(['poi_suncrest']);
+  private lastPoiScan = -1;
 
   // Entities & Props
   private playerModel!: ArticulatedPlayer;
@@ -587,6 +591,12 @@ export class WorldEngine {
     );
     this.overworldGroup.add(this.vegetation.group);
 
+    // Deterministic inhabited settlements beyond the original fixed villages.
+    // The streaming system creates and retires only the 3x3 nearby cell region.
+    this.livingSettlements = new LivingSettlementSystem(this.stonePbr, this.woodPbr);
+    this.livingSettlements.update(this.playerState.x, this.playerState.z, this.origin.originX, this.origin.originZ);
+    this.overworldGroup.add(this.livingSettlements.group);
+
     // 4. Suncrest Citadel Plaza + Central Crystal Spire + Towns + Harbors + Lighthouses
     this.buildCitadelAndShrines();
 
@@ -873,13 +883,22 @@ export class WorldEngine {
       this.brushPatches.push({ id: `brush_${i}`, x: bp.x, z: bp.z, burningTimer: 0, burnedOut: false, mesh: m });
     });
 
-    const enemySpecs: { kind: 'wraith' | 'golem' | 'stalker'; name: string; x: number; z: number }[] = [
+    const enemySpecs: { kind: 'wraith' | 'golem' | 'stalker'; name: string; x: number; z: number; id?: string }[] = [
       { kind: 'wraith', name: 'Blight Wraith', x: -46, z: 38 },
       { kind: 'wraith', name: 'Grove Stalker Wraith', x: -60, z: 54 },
       { kind: 'golem', name: 'Obsidian Ash Golem', x: 48, z: 36 },
       { kind: 'golem', name: 'Crag Sentinel Golem', x: 62, z: 52 },
       { kind: 'stalker', name: 'Tempest Stalker', x: -12, z: -64 },
       { kind: 'stalker', name: 'Spire Arc Hunter', x: 14, z: -68 },
+      // Frontier guardians are placed outside each island's central waystones.
+      { kind: 'stalker', name: 'Moonveil Oathkeeper', id: 'guardian_moonveil', x: -254, z: 341 },
+      { kind: 'wraith', name: 'Moonlit Remnant', x: -297, z: 321 },
+      { kind: 'golem', name: 'Thornheart Sentinel', id: 'guardian_thornwild', x: -74, z: 427 },
+      { kind: 'wraith', name: 'Rootbound Shade', x: -112, z: 385 },
+      { kind: 'golem', name: 'Crownfire Guardian', id: 'guardian_ashen', x: 244, z: 383 },
+      { kind: 'stalker', name: 'Ashen Watcher', x: 204, z: 340 },
+      { kind: 'stalker', name: 'Stormglass Harbinger', id: 'guardian_stormglass', x: 54, z: 547 },
+      { kind: 'wraith', name: 'Navigator Echo', x: 15, z: 511 },
     ];
     enemySpecs.forEach((es, i) => {
       const parts = createEnemyModel(es.kind);
@@ -887,7 +906,7 @@ export class WorldEngine {
       this.overworldGroup.add(parts.group);
       const maxHp = es.kind === 'golem' ? 140 : es.kind === 'stalker' ? 110 : 90;
       this.enemies.push({
-        id: `enemy_${i}`,
+        id: es.id ?? `enemy_${i}`,
         kind: es.kind,
         name: es.name,
         biomeId: getBiomeAt(es.x, es.z),
@@ -2052,7 +2071,7 @@ export class WorldEngine {
         this.callbacks.onCombatLog(`Slayed ${enemy.name}! (+180 XP, +140g)`, 'quest');
       } else {
         this.callbacks.onGainXpAndGold(45, 24);
-        this.callbacks.onEnemyDefeated(enemy.kind as 'wraith' | 'golem' | 'stalker', enemy.biomeId);
+        this.callbacks.onEnemyDefeated(enemy.kind as 'wraith' | 'golem' | 'stalker', enemy.biomeId, enemy.id);
         this.callbacks.onCombatLog(`Vanquished ${enemy.name} (+45 XP, +24g, +1 Blight Ichor).`, 'quest');
       }
       if (this.activeDungeon && this.dungeonEnemies.every((d) => !d.alive)) {
@@ -2170,6 +2189,7 @@ export class WorldEngine {
         const shifted = this.origin.update(this.playerState.x, this.playerState.z, [
           this.chunkStreamer.group,
           this.vegetation.group,
+          this.livingSettlements.group,
           this.seaLife.group,
           ...this.npcMeshes.values(),
           ...this.outpostMeshes.values(),
@@ -2201,7 +2221,24 @@ export class WorldEngine {
         this.origin.originZ,
         this.season
       );
+      this.livingSettlements.update(this.playerState.x, this.playerState.z, this.origin.originX, this.origin.originZ);
       this.seaLife.update(dt, elapsed, this.origin.originX, this.origin.originZ, this.waveSampler);
+
+      // Regional story discovery is proximity based and throttled to avoid
+      // scanning landmarks every physics tick. The quest journal persists
+      // the actual outcome so crossing a location twice never duplicates XP.
+      if (elapsed - this.lastPoiScan >= 0.35) {
+        this.lastPoiScan = elapsed;
+        for (const poi of WORLD_POIS) {
+          if (this.discoveredPois.has(poi.id)) continue;
+          const dx = this.playerState.x - poi.x;
+          const dz = this.playerState.z - poi.z;
+          if (dx * dx + dz * dz <= 22 * 22) {
+            this.discoveredPois.add(poi.id);
+            this.callbacks.onPoiDiscover(poi.id, poi.name);
+          }
+        }
+      }
 
       const nowBiome = getBiomeAt(this.playerState.x, this.playerState.z);
       if (nowBiome !== this.currentBiome) {
@@ -2673,6 +2710,15 @@ export class WorldEngine {
       if (e.attackCooldown > 0) e.attackCooldown -= dt;
 
       const dist = Math.hypot(this.playerState.x - e.x, this.playerState.z - e.z);
+      // Hide and sleep remote enemies. Keeps outer island encounters from
+      // consuming draw calls and terrain sampling during mainland gameplay.
+      if (!this.activeDungeon && dist > 155) {
+        if (grp) grp.visible = false;
+        e.windupTimer = 0;
+        if (e.parts) e.parts.telegraphRing.visible = false;
+        continue;
+      }
+      if (grp) grp.visible = true;
       const aggroRange = e.isDragon ? 28 : 19;
       const meleeRange = e.isDragon ? 5.2 : 2.9;
 
@@ -3095,6 +3141,21 @@ export class WorldEngine {
         }
       });
 
+      // Procedurally streamed towns appear on navigation just like hand-made
+      // settlements. Only active nearby world cells are included.
+      this.livingSettlements.visibleSettlements.forEach((site) => {
+        miniMapEntities.push({
+          id: site.id, kind: 'outpost', x: site.x, z: site.z,
+          color: '#f3c57b', label: site.name,
+        });
+        compassMarkers.push({
+          id: site.id, kind: 'town', label: site.name,
+          x: site.x, z: site.z,
+          distance: Math.round(Math.hypot(site.x - this.playerState.x, site.z - this.playerState.z)),
+          color: '#f3c57b',
+        });
+      });
+
       WORLD_POIS.forEach((poi) => {
         if (poi.kind === 'harbor') {
           miniMapEntities.push({ id: poi.id, kind: 'harbor', x: poi.x, z: poi.z, color: '#60a5fa', label: poi.name });
@@ -3106,6 +3167,16 @@ export class WorldEngine {
             z: poi.z,
             distance: Math.round(Math.hypot(poi.x - this.playerState.x, poi.z - this.playerState.z)),
             color: '#60a5fa',
+          });
+        } else if (poi.kind === 'lighthouse' || poi.kind === 'wreck') {
+          compassMarkers.push({
+            id: poi.id,
+            kind: 'town',
+            label: poi.name,
+            x: poi.x,
+            z: poi.z,
+            distance: Math.round(Math.hypot(poi.x - this.playerState.x, poi.z - this.playerState.z)),
+            color: poi.kind === 'lighthouse' ? '#a78bfa' : '#f59e0b',
           });
         } else if (poi.kind === 'capital' || poi.kind === 'town') {
           compassMarkers.push({
@@ -3179,7 +3250,8 @@ export class WorldEngine {
       !this.activeDungeon &&
       (this.npcs.some((n) => Math.hypot(n.x - this.playerState.x, n.z - this.playerState.z) < 24) ||
         this.outposts.some((o) => Math.hypot(o.x - this.playerState.x, o.z - this.playerState.z) < 28) ||
-        this.harborAnchors.some((h) => Math.hypot(h.x - this.playerState.x, h.z - this.playerState.z) < 32));
+        this.harborAnchors.some((h) => Math.hypot(h.x - this.playerState.x, h.z - this.playerState.z) < 32) ||
+        this.livingSettlements.visibleSettlements.some((site) => Math.hypot(site.x - this.playerState.x, site.z - this.playerState.z) < 40));
 
     this.callbacks.onHudTick({
       currentBiome: this.currentBiome,
@@ -3232,6 +3304,7 @@ export class WorldEngine {
     this.chunkStreamer.dispose();
     this.oceanSurface.dispose();
     this.vegetation.dispose();
+    this.livingSettlements.dispose();
     this.skyWeather.dispose();
     this.particlePool.dispose();
     this.pipeline.dispose();

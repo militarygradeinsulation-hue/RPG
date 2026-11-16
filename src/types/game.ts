@@ -115,6 +115,7 @@ export interface QuestChoice {
   repDelta?: { factionId: FactionId; delta: number };
   rewardGold: number;
   rewardXp: number;
+  rewardItemId?: string;
   consequenceText: string;
 }
 
