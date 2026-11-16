@@ -19,6 +19,7 @@ export const DEFAULT_ACCESSIBILITY: AccessibilitySettings = {
   sfxVolume: 0.75,
   graphicsPreset: 'auto',
   showPerfHud: false,
+  touchControls: 'auto',
 };
 
 export function loadLocalSaves(): Record<string, GameStateSnapshot> {

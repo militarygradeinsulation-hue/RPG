@@ -40,6 +40,7 @@ function HeroPreview({ appearance, pose }: { appearance: CharacterAppearance; po
     renderer.toneMapping = THREE.AgXToneMapping;
     renderer.toneMappingExposure = 1.2;
     renderer.shadowMap.enabled = true;
+    renderer.domElement.style.touchAction = 'none';
     host.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
@@ -142,7 +143,7 @@ function HeroPreview({ appearance, pose }: { appearance: CharacterAppearance; po
     if (sceneRef.current) sceneRef.current.pose = pose;
   }, [pose]);
 
-  return <div ref={hostRef} className="w-full h-full cursor-grab active:cursor-grabbing" aria-label="Hero preview. Drag to rotate." />;
+  return <div ref={hostRef} className="w-full h-full touch-none-canvas cursor-grab active:cursor-grabbing" aria-label="Hero preview. Drag to rotate." />;
 }
 
 function Swatches({ colors, value, onPick, label }: { colors: number[]; value: number; onPick: (c: number) => void; label: string }) {
@@ -211,17 +212,17 @@ export default function CharacterCreatorModal({ initial, confirmLabel = 'Begin C
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-3" role="dialog" aria-modal="true" aria-label="Create your hero">
-      <div className="hud-panel w-full max-w-5xl h-[min(92vh,720px)] rounded-2xl border border-amber-300/25 shadow-2xl flex flex-col md:flex-row overflow-hidden">
-        <div className="relative md:w-[44%] h-64 md:h-auto bg-gradient-to-b from-slate-900 to-slate-950">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-2 sm:p-3" role="dialog" aria-modal="true" aria-label="Create your hero">
+      <div className="hud-panel w-full max-w-5xl h-[min(94dvh,720px)] rounded-2xl border border-amber-300/25 shadow-2xl flex flex-col md:flex-row overflow-hidden">
+        <div className="relative shrink-0 md:w-[44%] h-48 sm:h-56 md:h-auto bg-gradient-to-b from-slate-900 to-slate-950">
           <HeroPreview appearance={lookForPreview} pose={pose} />
           <div className="absolute top-3 left-0 right-0 text-center pointer-events-none">
-            <div className="font-display text-2xl text-amber-200 tracking-wider drop-shadow">{trimmed || 'Your Hero'}</div>
+            <div className="font-display text-xl sm:text-2xl text-amber-200 tracking-wider drop-shadow">{trimmed || 'Your Hero'}</div>
             <div className="text-[11px] uppercase tracking-[0.25em] text-amber-100/70">{HERO_CLASSES[a.heroClass].label}</div>
           </div>
           <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-1.5">
             {(['idle', 'walk', 'run'] as const).map((p) => (
-              <button key={p} type="button" onClick={() => setPose(p)} className={`px-3 py-1 rounded-md text-xs font-semibold capitalize border ${pose === p ? 'bg-amber-500 text-slate-950 border-amber-400' : 'bg-slate-900/80 text-slate-200 border-white/15'}`}>
+              <button key={p} type="button" onClick={() => setPose(p)} className={`px-3 py-1.5 rounded-md text-xs font-semibold capitalize border ${pose === p ? 'bg-amber-500 text-slate-950 border-amber-400' : 'bg-slate-900/80 text-slate-200 border-white/15'}`}>
                 {p}
               </button>
             ))}

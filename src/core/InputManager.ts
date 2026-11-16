@@ -7,13 +7,23 @@ export interface CameraInputDelta {
 }
 
 /**
- * Unified keyboard + drag-mouse + pointer-lock input controller.
- * Supports seamless switching between mouse-drag orbit and pointer-lock camera look.
+ * Unified keyboard + drag-mouse + pointer-lock + multi-touch input controller.
+ * Supports mouse-drag orbit, pointer-lock, 1-finger touch look, 2-finger pinch zoom,
+ * and virtual touch stick / hold inputs for mobile gameplay.
  */
 export class InputManager {
   public readonly keys: Record<string, boolean> = {};
   public isPointerLocked = false;
   public isDragging = false;
+
+  // Virtual touch controls state (driven by MobileTouchControls)
+  public virtualMoveX = 0;
+  public virtualMoveY = 0;
+  public virtualSprint = false;
+  public virtualBlock = false;
+  public virtualAscend = false;
+  public virtualDive = false;
+
   private lastX = 0;
   private lastY = 0;
   private pendingYaw = 0;
@@ -21,7 +31,9 @@ export class InputManager {
   private pendingZoom = 0;
   private enabled = false;
   private rightMouseDown = false;
-  private pointerIds = new Set<number>();
+  private lastPointerWasTouch = false;
+  private activePointers = new Map<number, { x: number; y: number; pointerType: string }>();
+  private lastPinchDist: number | null = null;
   private cleanupFn: () => void = () => {};
 
   constructor(
@@ -46,10 +58,12 @@ export class InputManager {
     if (!v) {
       this.isDragging = false;
       this.rightMouseDown = false;
-      this.pointerIds.clear();
+      this.activePointers.clear();
+      this.lastPinchDist = null;
       this.pendingYaw = 0;
       this.pendingPitch = 0;
       this.pendingZoom = 0;
+      this.clearVirtualInputs();
       Object.keys(this.keys).forEach((k) => {
         this.keys[k] = false;
       });
@@ -63,8 +77,34 @@ export class InputManager {
     }
   }
 
+  public setVirtualMove(x: number, y: number, sprint?: boolean): void {
+    this.virtualMoveX = THREE.MathUtils.clamp(x, -1, 1);
+    this.virtualMoveY = THREE.MathUtils.clamp(y, -1, 1);
+    if (sprint !== undefined) {
+      this.virtualSprint = sprint;
+    }
+    this.callbacks.onFirstGesture();
+  }
+
+  public setVirtualHold(kind: 'sprint' | 'block' | 'ascend' | 'dive', active: boolean): void {
+    if (kind === 'sprint') this.virtualSprint = active;
+    else if (kind === 'block') this.virtualBlock = active;
+    else if (kind === 'ascend') this.virtualAscend = active;
+    else if (kind === 'dive') this.virtualDive = active;
+    if (active) this.callbacks.onFirstGesture();
+  }
+
+  public clearVirtualInputs(): void {
+    this.virtualMoveX = 0;
+    this.virtualMoveY = 0;
+    this.virtualSprint = false;
+    this.virtualBlock = false;
+    this.virtualAscend = false;
+    this.virtualDive = false;
+  }
+
   public isBlocking(): boolean {
-    return Boolean(this.keys['KeyB'] || this.rightMouseDown);
+    return Boolean(this.keys['KeyB'] || this.rightMouseDown || this.virtualBlock);
   }
 
   public consumeCameraDelta(): CameraInputDelta {
@@ -81,11 +121,18 @@ export class InputManager {
 
   public requestPointerLock(): void {
     if (!this.enabled || !this.callbacks.isPlaying()) return;
+    if (this.lastPointerWasTouch || window.matchMedia?.('(pointer: coarse)').matches) return;
     try {
       void this.dom.requestPointerLock?.();
     } catch {
       // Pointer lock optional
     }
+  }
+
+  private computePinchDist(): number | null {
+    if (this.activePointers.size < 2) return null;
+    const pts = Array.from(this.activePointers.values());
+    return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
   }
 
   private bind() {
@@ -131,7 +178,9 @@ export class InputManager {
     const onBlur = () => {
       this.isDragging = false;
       this.rightMouseDown = false;
-      this.pointerIds.clear();
+      this.activePointers.clear();
+      this.lastPinchDist = null;
+      this.clearVirtualInputs();
       Object.keys(this.keys).forEach((k) => {
         this.keys[k] = false;
       });
@@ -140,15 +189,24 @@ export class InputManager {
     const onPointerDown = (e: PointerEvent) => {
       if (!this.enabled || !this.callbacks.isPlaying()) return;
       this.callbacks.onFirstGesture();
-      if (e.button === 2) {
-        this.rightMouseDown = true;
+      this.lastPointerWasTouch = e.pointerType === 'touch';
+
+      if (e.pointerType === 'mouse') {
+        if (e.button === 2) {
+          this.rightMouseDown = true;
+        }
+        if (e.button !== 0 && e.button !== 2) return;
       }
-      if (e.button === 0 || e.button === 2) {
-        this.pointerIds.add(e.pointerId);
-        this.isDragging = true;
-        this.lastX = e.clientX;
-        this.lastY = e.clientY;
-      }
+
+      this.activePointers.set(e.pointerId, {
+        x: e.clientX,
+        y: e.clientY,
+        pointerType: e.pointerType,
+      });
+      this.isDragging = true;
+      this.lastX = e.clientX;
+      this.lastY = e.clientY;
+      this.lastPinchDist = this.computePinchDist();
     };
 
     const onDblClick = () => {
@@ -162,19 +220,42 @@ export class InputManager {
         this.pendingPitch += THREE.MathUtils.clamp(e.movementY, -120, 120) * 0.0024;
         return;
       }
-      if (!this.isDragging || !this.pointerIds.has(e.pointerId)) return;
-      const dx = e.clientX - this.lastX;
-      const dy = e.clientY - this.lastY;
+      if (!this.isDragging || !this.activePointers.has(e.pointerId)) return;
+
+      const prev = this.activePointers.get(e.pointerId)!;
+      const dx = e.clientX - prev.x;
+      const dy = e.clientY - prev.y;
+      prev.x = e.clientX;
+      prev.y = e.clientY;
+
+      if (this.activePointers.size >= 2) {
+        const pinch = this.computePinchDist();
+        if (pinch !== null && this.lastPinchDist !== null) {
+          this.pendingZoom += (this.lastPinchDist - pinch) * 0.038;
+        }
+        this.lastPinchDist = pinch;
+        return;
+      }
+
       this.lastX = e.clientX;
       this.lastY = e.clientY;
-      this.pendingYaw -= dx * 0.0062;
-      this.pendingPitch += dy * 0.0044;
+      const isTouch = e.pointerType === 'touch';
+      this.pendingYaw -= dx * (isTouch ? 0.0074 : 0.0062);
+      this.pendingPitch += dy * (isTouch ? 0.0054 : 0.0044);
     };
 
     const onPointerUp = (e: PointerEvent) => {
-      if (e.button === 2) this.rightMouseDown = false;
-      this.pointerIds.delete(e.pointerId);
-      this.isDragging = this.pointerIds.size > 0;
+      if (e.pointerType === 'mouse' && e.button === 2) {
+        this.rightMouseDown = false;
+      }
+      this.activePointers.delete(e.pointerId);
+      this.isDragging = this.activePointers.size > 0;
+      this.lastPinchDist = this.computePinchDist();
+      if (this.activePointers.size === 1) {
+        const remaining = Array.from(this.activePointers.values())[0];
+        this.lastX = remaining.x;
+        this.lastY = remaining.y;
+      }
     };
 
     const onWheel = (e: WheelEvent) => {

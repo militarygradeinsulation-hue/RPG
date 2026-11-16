@@ -314,16 +314,16 @@ export const MiniMap: React.FC<MiniMapProps> = ({
   const zoneTitle = activeDungeon ? activeDungeon.name : biomes[currentBiome]?.name || 'Suncrest';
 
   return (
-    <div className="w-[172px] rounded-xl hud-panel p-2 shadow-xl space-y-1.5 select-none">
+    <div className="w-[126px] md:w-[172px] rounded-xl hud-panel p-1.5 md:p-2 shadow-xl space-y-1 md:space-y-1.5 select-none">
       <div className="flex items-center justify-between gap-1 px-0.5">
-        <span className="text-[11px] font-semibold text-amber-200 truncate" title={zoneTitle}>
+        <span className="text-[10px] md:text-[11px] font-semibold text-amber-200 truncate" title={zoneTitle}>
           {zoneTitle}
         </span>
         {!activeDungeon && (
           <button
             type="button"
             onClick={() => setWideZoom((z) => !z)}
-            className="text-[10px] font-mono-tabular px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 shrink-0"
+            className="text-[10px] font-mono-tabular px-1.5 py-0.5 min-h-[24px] md:min-h-0 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 shrink-0"
             title="Toggle Radar Zoom"
           >
             {wideZoom ? '2x' : '1x'}
@@ -331,7 +331,7 @@ export const MiniMap: React.FC<MiniMapProps> = ({
         )}
       </div>
 
-      <div className="relative w-[156px] h-[156px] rounded-lg overflow-hidden border border-white/15 bg-slate-950">
+      <div className="relative w-[112px] h-[112px] md:w-[156px] md:h-[156px] rounded-lg overflow-hidden border border-white/15 bg-slate-950">
         <canvas ref={canvasRef} width={SIZE} height={SIZE} className="w-full h-full block" />
         <div className="absolute top-1 left-1/2 -translate-x-1/2 px-1 rounded bg-slate-950/85 text-[9px] font-bold text-amber-300 tracking-wider pointer-events-none">
           N
@@ -341,17 +341,17 @@ export const MiniMap: React.FC<MiniMapProps> = ({
           onClick={onOpenAtlas}
           aria-label="Open World Atlas"
           title="Open World Atlas"
-          className="absolute bottom-1 right-1 p-1 rounded bg-slate-950/85 hover:bg-slate-800 border border-white/15 text-emerald-300"
+          className="absolute bottom-1 right-1 p-1.5 md:p-1 rounded bg-slate-950/85 hover:bg-slate-800 border border-white/15 text-emerald-300"
         >
-          <Compass className="w-3 h-3" />
+          <Compass className="w-3.5 h-3.5 md:w-3 md:h-3" />
         </button>
       </div>
 
-      <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono-tabular px-0.5">
+      <div className="flex items-center justify-between text-[9px] md:text-[10px] text-slate-400 font-mono-tabular px-0.5">
         <span>
           {Math.round(playerX)}, {Math.round(playerZ)}
         </span>
-        <span className="flex items-center gap-1.5 text-[9px]">
+        <span className="hidden md:flex items-center gap-1.5 text-[9px]">
           <span className="inline-flex items-center gap-0.5 text-purple-300">
             <span className="w-1.5 h-1.5 rounded-full bg-purple-400 inline-block" />
             Seal

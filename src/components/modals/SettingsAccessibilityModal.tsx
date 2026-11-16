@@ -35,18 +35,18 @@ export const SettingsAccessibilityModal: React.FC<SettingsAccessibilityModalProp
       role="dialog"
       aria-label="Accessibility, Audio, and World Controls"
     >
-      <div className="w-full max-w-2xl max-h-[88vh] flex flex-col rounded-xl hud-modal shadow-2xl overflow-hidden">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
+      <div className="w-full max-w-2xl max-h-[90dvh] flex flex-col rounded-xl hud-modal shadow-2xl overflow-hidden">
+        <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-white/10">
           <div className="flex items-center gap-2">
             <Accessibility className="w-5 h-5 text-amber-300" />
-            <h2 className="font-display text-xl font-bold text-amber-300">Accessibility & Settings</h2>
+            <h2 className="font-display text-lg sm:text-xl font-bold text-amber-300">Accessibility & Settings</h2>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close settings" className="p-2 rounded-lg hover:bg-white/10 text-slate-300">
+          <button type="button" onClick={onClose} aria-label="Close settings" className="p-2.5 rounded-lg hover:bg-white/10 text-slate-300">
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5 sm:space-y-6">
           {/* Color Theme & Text Scale */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
@@ -135,6 +135,36 @@ export const SettingsAccessibilityModal: React.FC<SettingsAccessibilityModalProp
             </div>
           </div>
 
+          {/* Touch & Mobile Controls */}
+          <div className="p-4 rounded-xl bg-slate-900/90 border border-white/10 space-y-2.5">
+            <div>
+              <div className="text-xs font-semibold text-amber-300">Mobile & Touch Controls</div>
+              <div className="text-[11px] text-slate-400">
+                On-screen virtual analog stick, thumb combat pad, pinch zoom, and swipe camera.
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {([
+                { id: 'auto', label: 'Auto Detect' },
+                { id: 'on', label: 'Always On' },
+                { id: 'off', label: 'Off (Desktop)' },
+              ] as const).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => onUpdateSettings({ ...settings, touchControls: opt.id })}
+                  className={`py-2.5 px-2 rounded-lg border text-xs font-semibold transition-colors ${
+                    (settings.touchControls ?? 'auto') === opt.id
+                      ? 'bg-amber-500 text-slate-950 border-amber-400'
+                      : 'bg-slate-800 text-slate-200 border-white/10 hover:bg-slate-700'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Graphics Quality & Performance Telemetry */}
           <div className="p-4 rounded-xl bg-slate-900/90 border border-white/10 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -154,7 +184,7 @@ export const SettingsAccessibilityModal: React.FC<SettingsAccessibilityModalProp
                 <span>Show Perf Monitor (ms / Draw Calls)</span>
               </label>
             </div>
-            <div className="grid grid-cols-5 gap-1.5">
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
               {([
                 { id: 'auto', label: 'Auto' },
                 { id: 'low', label: 'Low' },
@@ -253,8 +283,13 @@ export const SettingsAccessibilityModal: React.FC<SettingsAccessibilityModalProp
           </div>
 
           {/* Controls Summary */}
-          <div className="text-xs text-slate-300 leading-relaxed border-t border-white/10 pt-3">
-            <strong>Controls:</strong> WASD / Arrows Move · Space Jump · Shift Sprint · C Climb Towers · Drag Mouse Camera · J / Click Blade Strike · 1 Fire · 2 Lightning · 3 Frost · 4 Gale · E Interact · G Gesture Wheel · V Voice Command · H Toggle HUD
+          <div className="text-xs text-slate-300 leading-relaxed border-t border-white/10 pt-3 space-y-1">
+            <div>
+              <strong>Touch:</strong> Left Stick Move / Steer (Push Outer Edge to Sprint) · 1-Finger Drag Camera · 2-Finger Pinch Zoom · Right Pad Attack, Elements, Jump/Swim, Dodge, Block, Crouch/Dive &amp; Interact
+            </div>
+            <div>
+              <strong>Keyboard:</strong> WASD Move · Space Jump · Shift Sprint · C Crouch/Climb/Dive · Drag/DblClick Look · J Attack · 1–4 Elements · B Block · V Dodge · F Anchor · E Helm/Interact · G Wheel · H Zen HUD
+            </div>
           </div>
         </div>
       </div>

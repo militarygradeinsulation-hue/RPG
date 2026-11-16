@@ -78,7 +78,7 @@ export const HorizonCompassBar: React.FC<CompassBarWithCoordsProps> = ({
     .slice(0, 10);
 
   return (
-    <div className="fixed top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-none select-none flex flex-col items-center gap-1 w-[320px] sm:w-[440px]">
+    <div className="hidden md:flex fixed top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-none select-none flex-col items-center gap-1 w-[340px] lg:w-[440px]">
       <div className="relative w-full h-8 rounded-lg hud-panel overflow-hidden shadow-lg border border-white/15">
         {/* Center Reticle */}
         <div className="absolute left-1/2 top-0 bottom-0 w-px bg-amber-400/50 -translate-x-1/2" />

@@ -70,7 +70,7 @@ export const GestureWheel: React.FC<GestureWheelProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/50"
+      className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4"
       role="dialog"
       aria-label="Quick Tactical Gesture Menu"
       onClick={onClose}
@@ -78,9 +78,10 @@ export const GestureWheel: React.FC<GestureWheelProps> = ({
       <div
         ref={wheelRef}
         onClick={(e) => e.stopPropagation()}
+        onPointerDown={handlePointerMove}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        className="relative w-80 h-80 rounded-full hud-modal flex items-center justify-center shadow-2xl"
+        className="relative w-72 h-72 sm:w-80 sm:h-80 rounded-full hud-modal flex items-center justify-center shadow-2xl touch-none-canvas"
       >
         <div className="text-center px-4 pointer-events-none">
           <div className="text-xs text-slate-400">Level {playerLevel} · {slotLimit} Slots</div>

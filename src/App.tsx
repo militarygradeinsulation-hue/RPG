@@ -35,12 +35,15 @@ import {
   SkipForward,
   VolumeX,
   Waves,
+  Menu,
+  X,
 } from 'lucide-react';
 import { User } from 'firebase/auth';
 import { MusicPlaybackState, soundEngine, VisualCueEvent } from './audio/soundEngine';
 import { HorizonCompassBar } from './components/hud/CompassBar';
 import { GestureWheel } from './components/hud/GestureWheel';
 import { MiniMap } from './components/hud/MiniMap';
+import { MobileTouchControls } from './components/hud/MobileTouchControls';
 import { VoiceOverlay } from './components/hud/VoiceOverlay';
 import { DialogueModal } from './components/modals/DialogueModal';
 import { InventoryCraftingModal } from './components/modals/InventoryCraftingModal';
@@ -300,6 +303,38 @@ export default function App() {
   const [photos, setPhotos] = useState<PhotoSnapshot[]>(() => loadSavedPhotos());
   const [accessibility, setAccessibility] = useState<AccessibilitySettings>(() => loadAccessibilitySettings());
   const [user, setUser] = useState<User | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mobileRadarOpen, setMobileRadarOpen] = useState(true);
+  const [isCoarseTouch, setIsCoarseTouch] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const ua = navigator.userAgent || '';
+    if (/Mobi|Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(ua)) return true;
+    if (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1) return true;
+    return Boolean(window.matchMedia?.('(pointer: coarse)').matches);
+  });
+
+  useEffect(() => {
+    const mq = window.matchMedia?.('(pointer: coarse)');
+    if (!mq) return;
+    const update = () => {
+      const ua = navigator.userAgent || '';
+      const uaTouch = /Mobi|Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(ua) || (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
+      setIsCoarseTouch(mq.matches || uaTouch);
+    };
+    mq.addEventListener?.('change', update);
+    return () => mq.removeEventListener?.('change', update);
+  }, []);
+
+  const showTouchControls =
+    accessibility.touchControls === 'on' || (accessibility.touchControls !== 'off' && isCoarseTouch);
+
+  const handleTouchMove = useCallback((x: number, y: number, sprint: boolean) => {
+    engineRef.current?.setVirtualMove(x, y, sprint);
+  }, []);
+
+  const handleTouchHold = useCallback((kind: 'sprint' | 'block' | 'ascend' | 'dive', active: boolean) => {
+    engineRef.current?.setVirtualHold(kind, active);
+  }, []);
 
   const logCounterRef = useRef(1);
   const playerRef = useRef(player);
@@ -1065,7 +1100,7 @@ export default function App() {
   const activeSeal = seals.find((s) => s.id === activeSealId) || null;
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-[#090d16]">
+    <div className="relative w-screen h-[100dvh] overflow-hidden bg-[#090d16]">
       {/* Screen Reader Live Region */}
       {accessibility.screenReaderAnnouncements && (
         <div className="sr-only" aria-live="polite">
@@ -1074,13 +1109,17 @@ export default function App() {
       )}
 
       {/* Isolated 3D WebGL Viewport */}
-      <div ref={canvasHostRef} className="fixed inset-0 w-full h-full z-0" aria-label="3D Open World Fantasy Viewport" />
+      <div
+        ref={canvasHostRef}
+        className="fixed inset-0 w-full h-full z-0 touch-none-canvas"
+        aria-label="3D Open World Fantasy Viewport"
+      />
 
       {/* Cinematic Live-World Title Screen */}
       {gameMode === 'title' && (
-        <div className="fixed inset-0 z-30 flex flex-col items-center justify-between py-12 px-6 bg-gradient-to-b from-slate-950/35 via-transparent to-slate-950/50 pointer-events-none">
-          <div className="flex flex-col items-center text-center mt-6 pointer-events-auto">
-            <svg viewBox="0 0 120 72" className="w-24 h-14 mb-3 drop-shadow-lg" aria-hidden="true">
+        <div className="fixed inset-0 z-30 flex flex-col items-center justify-between py-8 sm:py-12 px-4 sm:px-6 bg-gradient-to-b from-slate-950/35 via-transparent to-slate-950/50 pointer-events-none">
+          <div className="flex flex-col items-center text-center mt-4 sm:mt-6 pointer-events-auto">
+            <svg viewBox="0 0 120 72" className="w-20 h-12 sm:w-24 sm:h-14 mb-3 drop-shadow-lg" aria-hidden="true">
               <circle cx="60" cy="36" r="24" fill="none" stroke="#fbbf24" strokeWidth="1.8" strokeOpacity="0.85" />
               <polygon points="60,6 70,26 94,36 70,46 60,66 50,46 26,36 50,26" fill="none" stroke="#fde68a" strokeWidth="1.6" />
               <circle cx="60" cy="14" r="3" fill="#f97316" />
@@ -1096,7 +1135,7 @@ export default function App() {
             </p>
           </div>
 
-          <div className="flex flex-col items-center gap-4 mb-4 pointer-events-auto">
+          <div className="flex flex-col items-center gap-3 sm:gap-4 mb-16 sm:mb-4 pointer-events-auto max-w-xl text-center">
             <button
               type="button"
               onClick={() => {
@@ -1108,24 +1147,36 @@ export default function App() {
                 soundEngine.triggerCue('quest', 'Chronicle Begun');
                 setGameMode('playing');
               }}
-              className="px-8 py-3.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-display font-bold text-sm tracking-wide shadow-[0_0_30px_rgba(245,158,11,0.45)] flex items-center gap-2.5 transition-transform hover:scale-105"
+              className="px-7 sm:px-8 py-3.5 min-h-[48px] rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-display font-bold text-sm tracking-wide shadow-[0_0_30px_rgba(245,158,11,0.45)] flex items-center gap-2.5 transition-transform hover:scale-105 active:scale-95"
             >
               <Play className="w-4 h-4 fill-slate-950" />
-              {!player.appearance ? 'Create Your Hero [Enter]' : initialSave ? `Continue as ${player.appearance.name} [Enter]` : 'Enter Aethelgard [Enter]'}
+              {!player.appearance
+                ? showTouchControls
+                  ? 'Create Your Hero'
+                  : 'Create Your Hero [Enter]'
+                : initialSave
+                  ? showTouchControls
+                    ? `Continue as ${player.appearance.name}`
+                    : `Continue as ${player.appearance.name} [Enter]`
+                  : showTouchControls
+                    ? 'Enter Aethelgard'
+                    : 'Enter Aethelgard [Enter]'}
             </button>
-            <div className="text-xs text-slate-200/90 bg-slate-950/75 border border-white/15 px-4 py-1.5 rounded-lg">
-              WASD Move · Shift Sprint · C Crouch/Dive · Drag/DblClick Look · 1–4 Elements · J Strike · B Block · V Dodge · F Anchor · E Helm/Interact
+            <div className="text-[11px] sm:text-xs text-slate-200/90 bg-slate-950/75 border border-white/15 px-3.5 sm:px-4 py-1.5 rounded-lg">
+              {showTouchControls
+                ? 'Left Stick Move/Steer · 1-Finger Drag Look · Pinch Zoom · Right Pad Attack, Elements & Interact'
+                : 'WASD Move · Shift Sprint · C Crouch/Dive · Drag/DblClick Look · 1–4 Elements · J Strike · B Block · V Dodge · F Anchor · E Helm/Interact'}
             </div>
           </div>
 
-          <div className="fixed bottom-4 right-4 pointer-events-auto flex items-center gap-2 hud-panel rounded-xl px-3 py-2 text-xs shadow-lg">
+          <div className="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 pointer-events-auto flex items-center gap-2 hud-panel rounded-xl px-3 py-2 text-xs shadow-lg">
             <Music className="w-3.5 h-3.5 text-amber-300 shrink-0" />
-            <span className="text-slate-200 max-w-[165px] truncate">{musicState.currentTrack.title}</span>
+            <span className="text-slate-200 max-w-[140px] sm:max-w-[165px] truncate">{musicState.currentTrack.title}</span>
             <button
               type="button"
               onClick={() => soundEngine.toggleMusicPlay()}
               aria-label={musicState.isPlaying ? 'Pause music' : 'Play music'}
-              className="p-1 rounded hover:bg-white/10 text-amber-300"
+              className="p-1.5 rounded hover:bg-white/10 text-amber-300"
             >
               {musicState.isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
             </button>
@@ -1133,7 +1184,7 @@ export default function App() {
               type="button"
               onClick={() => soundEngine.nextTrack()}
               aria-label="Next track"
-              className="p-1 rounded hover:bg-white/10 text-slate-300"
+              className="p-1.5 rounded hover:bg-white/10 text-slate-300"
             >
               <SkipForward className="w-3.5 h-3.5" />
             </button>
@@ -1141,7 +1192,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Top-Center Skyrim-style Horizon Compass Bar */}
+      {/* Top-Center Skyrim-style Horizon Compass Bar (desktop / tablet >=768px) */}
       {gameMode === 'playing' && !hudCollapsed && (
         <HorizonCompassBar
           cameraYaw={cameraYaw}
@@ -1169,36 +1220,39 @@ export default function App() {
               else if (p.kind === 'chest') engineRef.current?.lootDungeonChest(p.id);
               else if (p.kind === 'salvage') engineRef.current?.lootSeaWreck(p.id);
               else if (p.kind === 'shipyard') setActiveModal('shipyard');
+              else if (p.kind === 'ship_helm') engineRef.current?.triggerInteract();
             }}
             style={{
-              left: `${Math.min(window.innerWidth - 150, Math.max(20, p.screenX))}px`,
-              top: `${Math.min(window.innerHeight - 90, Math.max(60, p.screenY))}px`,
+              left: `${Math.min(window.innerWidth - (showTouchControls ? 110 : 150), Math.max(20, p.screenX))}px`,
+              top: `${Math.min(window.innerHeight - (showTouchControls ? 190 : 90), Math.max(60, p.screenY))}px`,
               borderColor: p.color,
             }}
-            className="fixed z-10 -translate-x-1/2 -translate-y-full px-2.5 py-1 rounded-md hud-panel text-xs font-medium shadow-lg hover:scale-105 transition-transform whitespace-nowrap"
+            className="fixed z-10 -translate-x-1/2 -translate-y-full px-2.5 py-1.5 md:py-1 rounded-md hud-panel text-xs font-medium shadow-lg hover:scale-105 transition-transform whitespace-nowrap"
           >
             <span style={{ color: p.color }} className="font-semibold">
               {p.label}
             </span>{' '}
-            <span className="text-slate-300">· {p.actionHint}</span>
+            <span className="text-slate-300">
+              · {showTouchControls ? p.actionHint.replace('[E] ', '') : p.actionHint}
+            </span>
           </button>
         ))}
 
       {/* Top-Left Player Vitals & Biome Header */}
       {gameMode !== 'title' && !hudCollapsed && (
-        <aside className="fixed top-4 left-4 z-20 w-72 rounded-xl hud-panel p-3.5 shadow-xl space-y-2.5">
-          <div className="flex items-center justify-between">
-            <h1 className="font-display text-sm font-bold text-amber-300 tracking-wide">Aethelgard</h1>
-            <span className="font-mono-tabular text-xs text-slate-300">
+        <aside className="fixed top-[max(0.5rem,env(safe-area-inset-top))] md:top-4 left-[max(0.5rem,env(safe-area-inset-left))] md:left-4 z-20 w-[166px] sm:w-56 md:w-72 rounded-xl hud-panel p-2.5 md:p-3.5 shadow-xl space-y-1.5 md:space-y-2.5">
+          <div className="flex items-center justify-between gap-1">
+            <h1 className="font-display text-xs md:text-sm font-bold text-amber-300 tracking-wide truncate">Aethelgard</h1>
+            <span className="font-mono-tabular text-[10px] md:text-xs text-slate-300 shrink-0">
               Lv.{player.level} · {player.gold}g
             </span>
           </div>
 
           {/* HP / Mana / Stamina Bars */}
-          <div className="space-y-1.5 text-[11px] font-mono-tabular">
+          <div className="space-y-1 md:space-y-1.5 text-[10px] md:text-[11px] font-mono-tabular">
             <div>
               <div className="flex justify-between text-slate-300">
-                <span>Health</span>
+                <span>HP</span>
                 <span>
                   {Math.round(player.hp)}/{player.maxHp}
                 </span>
@@ -1220,7 +1274,7 @@ export default function App() {
             </div>
             <div>
               <div className="flex justify-between text-slate-300">
-                <span>{player.isClimbing ? 'Stamina (Climbing)' : 'Stamina'}</span>
+                <span>{player.isClimbing ? 'Climb' : 'Stamina'}</span>
                 <span>
                   {Math.round(player.stamina)}/{player.maxStamina}
                 </span>
@@ -1231,24 +1285,24 @@ export default function App() {
             </div>
           </div>
 
-          <div className="pt-1.5 border-t border-white/10 text-xs text-slate-300 space-y-0.5">
-            <div className="flex justify-between">
-              <span className="font-semibold text-white">
+          <div className="pt-1 md:pt-1.5 border-t border-white/10 text-[10px] md:text-xs text-slate-300 space-y-0.5">
+            <div className="flex justify-between gap-1">
+              <span className="font-semibold text-white truncate">
                 {activeDungeon ? activeDungeon.name : biomes[currentBiome].name}
               </span>
-              <span className="font-mono-tabular text-emerald-400">
+              <span className="font-mono-tabular text-emerald-400 shrink-0">
                 {activeDungeon
                   ? activeDungeon.cleared
                     ? 'Cleared'
-                    : 'Subterranean'
-                  : `${Math.round(biomes[currentBiome].health)}% Healthy`}
+                    : 'Cave'
+                  : `${Math.round(biomes[currentBiome].health)}%`}
               </span>
             </div>
-            <div className="text-[11px] text-slate-400 flex items-center justify-between gap-2">
-              <span>
+            <div className="text-[10px] md:text-[11px] text-slate-400 flex items-center justify-between gap-2">
+              <span className="truncate">
                 {season} · {timeOfDayLabel} · {weather}
               </span>
-              <div className="flex items-center gap-1">
+              <div className="hidden md:flex items-center gap-1">
                 <button
                   type="button"
                   onClick={() => {
@@ -1280,10 +1334,132 @@ export default function App() {
         </aside>
       )}
 
-      {/* Top-Right Compact Navigation & Quest Summary */}
+      {/* Top-Right Compact Navigation (Desktop strip on md+, Drawer bar on <md) */}
       {gameMode !== 'title' && (
-      <div className="fixed top-4 right-4 z-20 flex flex-col items-end gap-2">
-        <div className="flex flex-wrap items-center justify-end gap-1.5 hud-panel rounded-xl p-1.5 shadow-xl">
+      <div className="fixed top-[max(0.5rem,env(safe-area-inset-top))] md:top-4 right-[max(0.5rem,env(safe-area-inset-right))] md:right-4 z-20 flex flex-col items-end gap-1.5 md:gap-2">
+        {/* Mobile Compact Bar (<768px) */}
+        <div className="flex md:hidden items-center gap-1 hud-panel rounded-xl p-1 shadow-xl">
+          {!hudCollapsed && (
+            <>
+              <button
+                type="button"
+                onClick={() => setGameMode('paused')}
+                aria-label="Pause Game"
+                className="min-w-[40px] min-h-[40px] flex items-center justify-center rounded-lg hover:bg-white/10 text-slate-200"
+              >
+                <Pause className="w-4 h-4 text-amber-300" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setMobileRadarOpen((v) => !v)}
+                aria-label={mobileRadarOpen ? 'Hide Mini-Map' : 'Show Mini-Map'}
+                className={`min-w-[40px] min-h-[40px] flex items-center justify-center rounded-lg ${
+                  mobileRadarOpen ? 'bg-slate-800 text-emerald-300' : 'hover:bg-white/10 text-slate-300'
+                }`}
+              >
+                <Compass className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen((v) => !v)}
+                aria-label="Open Game Menu"
+                className={`min-w-[40px] min-h-[40px] px-2.5 flex items-center gap-1 rounded-lg text-xs font-semibold ${
+                  mobileMenuOpen ? 'bg-amber-500 text-slate-950' : 'bg-slate-800 text-slate-100'
+                }`}
+              >
+                {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+                <span>Menu</span>
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setMobileMenuOpen(false);
+              setHudCollapsed((v) => !v);
+            }}
+            aria-label={hudCollapsed ? 'Show HUD' : 'Zen Mode'}
+            className="min-w-[40px] min-h-[40px] px-2 flex items-center justify-center gap-1 rounded-lg bg-slate-800 text-xs font-semibold text-amber-300"
+          >
+            {hudCollapsed ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
+        </div>
+
+        {/* Mobile Expandable Drawer (<768px) */}
+        {mobileMenuOpen && !hudCollapsed && (
+          <div className="md:hidden w-[min(92vw,310px)] rounded-xl hud-modal p-3 shadow-2xl space-y-2.5 border border-white/15">
+            <div className="grid grid-cols-3 gap-1.5">
+              {(
+                [
+                  { id: 'inventory', label: 'Bag', Icon: Backpack, cls: 'text-amber-300' },
+                  { id: 'craft', label: 'Craft', Icon: Sparkles, cls: 'text-amber-300' },
+                  { id: 'quests', label: 'Quests', Icon: BookOpen, cls: 'text-amber-300' },
+                  { id: 'factions', label: 'Realm', Icon: Shield, cls: 'text-amber-300' },
+                  { id: 'atlas', label: 'Atlas', Icon: Globe, cls: 'text-emerald-300' },
+                  { id: 'shipyard', label: 'Fleet', Icon: Ship, cls: 'text-sky-300' },
+                  { id: 'skills', label: 'Skills', Icon: Compass, cls: 'text-amber-300' },
+                  { id: 'outposts', label: 'Build', Icon: Hammer, cls: 'text-amber-300' },
+                  { id: 'leaderboard', label: 'Ranks', Icon: Trophy, cls: 'text-amber-300' },
+                  { id: 'music', label: 'Score', Icon: Music, cls: 'text-amber-300' },
+                  { id: 'cloud', label: 'Sync', Icon: Cloud, cls: 'text-sky-300' },
+                  { id: 'settings', label: 'Settings', Icon: Settings, cls: 'text-slate-200' },
+                ] as const
+              ).map(({ id, label, Icon, cls }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    setActiveModal(id);
+                  }}
+                  className="min-h-[44px] flex flex-col items-center justify-center gap-1 rounded-lg bg-slate-900/90 hover:bg-slate-800 border border-white/10 text-[11px] font-medium text-slate-100"
+                >
+                  <Icon className={`w-4 h-4 ${cls}`} />
+                  <span>{label}</span>
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-3 gap-1.5 pt-1 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  handleCapturePhoto();
+                }}
+                className="min-h-[40px] flex items-center justify-center gap-1 rounded-lg bg-slate-800 text-[11px] font-semibold text-amber-200"
+              >
+                <Camera className="w-3.5 h-3.5" />
+                Photo
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const cycle = [0.26, 0.5, 0.72, 0.85];
+                  const nextIdx = cycle.find((v) => v > timeOfDayIndex + 0.04) ?? cycle[0];
+                  setTimeOfDayIndex(nextIdx);
+                  engineRef.current?.setTimeOfDayIndex(nextIdx);
+                }}
+                className="min-h-[40px] rounded-lg bg-slate-800 text-[11px] font-semibold text-amber-300"
+              >
+                Time
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = WEATHERS[(WEATHERS.indexOf(weather) + 1) % WEATHERS.length];
+                  setWeather(next);
+                  pushCombatLog(`Weather shifted to ${next}.`, 'world');
+                }}
+                className="min-h-[40px] rounded-lg bg-slate-800 text-[11px] font-semibold text-sky-300"
+              >
+                Sky: {weather}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Desktop Full Bar (>=768px) */}
+        <div className="hidden md:flex flex-wrap items-center justify-end gap-1.5 hud-panel rounded-xl p-1.5 shadow-xl">
           {!hudCollapsed && (
             <>
               <button
@@ -1398,22 +1574,24 @@ export default function App() {
         </div>
 
         {/* Real-Time Top-Right Mini-Map */}
-        {!hudCollapsed && (
-          <MiniMap
-            playerX={player.x}
-            playerZ={player.z}
-            cameraYaw={cameraYaw}
-            entities={miniMapEntities}
-            activeDungeon={activeDungeon}
-            biomes={biomes}
-            currentBiome={currentBiome}
-            onOpenAtlas={() => setActiveModal('atlas')}
-          />
+        {!hudCollapsed && !mobileMenuOpen && (
+          <div className={mobileRadarOpen ? 'block' : 'hidden md:block'}>
+            <MiniMap
+              playerX={player.x}
+              playerZ={player.z}
+              cameraYaw={cameraYaw}
+              entities={miniMapEntities}
+              activeDungeon={activeDungeon}
+              biomes={biomes}
+              currentBiome={currentBiome}
+              onOpenAtlas={() => setActiveModal('atlas')}
+            />
+          </div>
         )}
 
-        {/* Compact Now-Playing Soundtrack Bar */}
+        {/* Compact Now-Playing Soundtrack Bar (desktop >=768px) */}
         {!hudCollapsed && (
-          <div className="hud-panel rounded-lg px-2.5 py-1.5 text-[11px] flex items-center gap-1.5 shadow-lg w-[216px]">
+          <div className="hidden md:flex hud-panel rounded-lg px-2.5 py-1.5 text-[11px] items-center gap-1.5 shadow-lg w-[216px]">
             <button
               type="button"
               onClick={() => setActiveModal('music')}
@@ -1465,19 +1643,18 @@ export default function App() {
 
         {/* Optional Graphics Performance HUD */}
         {!hudCollapsed && accessibility.showPerfHud && telemetry && (
-          <div className="hud-panel rounded-lg px-2.5 py-1.5 text-[11px] font-mono-tabular text-slate-200 flex items-center gap-2.5 shadow-lg">
+          <div className="hud-panel rounded-lg px-2 py-1 text-[10px] md:text-[11px] font-mono-tabular text-slate-200 flex items-center gap-2 shadow-lg">
             <span className={telemetry.frameTimeMs <= 18 ? 'text-emerald-400 font-semibold' : telemetry.frameTimeMs <= 26 ? 'text-amber-300 font-semibold' : 'text-red-400 font-semibold'}>
               {telemetry.fps} FPS ({telemetry.frameTimeMs}ms)
             </span>
-            <span className="text-slate-400">· {telemetry.drawCalls} calls</span>
-            <span className="text-slate-400">· {(telemetry.triangles / 1000).toFixed(0)}k tris</span>
+            <span className="hidden sm:inline text-slate-400">· {telemetry.drawCalls} calls</span>
             <span className="uppercase text-sky-300 font-semibold">{telemetry.resolvedTier}</span>
           </div>
         )}
 
         {/* Visual Sound-Cue Accessibility Indicator */}
         {!hudCollapsed && accessibility.visualSoundCues && visualCue && (
-          <div className="hud-panel rounded-lg px-3 py-1.5 text-xs flex items-center gap-2 shadow-lg">
+          <div className="hidden md:flex hud-panel rounded-lg px-3 py-1.5 text-xs items-center gap-2 shadow-lg">
             <Volume2 className="w-3.5 h-3.5" style={{ color: visualCue.color }} />
             <span className="font-semibold" style={{ color: visualCue.color }}>
               {visualCue.label}
@@ -1487,16 +1664,23 @@ export default function App() {
         )}
 
         {!isOnline && (
-          <div className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white flex items-center gap-1.5 shadow-lg">
-            <WifiOff className="w-3.5 h-3.5" />
-            Offline Mode — Progress Saved Locally
+          <div className="rounded-lg bg-amber-600 px-2.5 py-1 text-[10px] md:text-xs font-semibold text-white flex items-center gap-1.5 shadow-lg">
+            <WifiOff className="w-3 h-3 md:w-3.5 md:h-3.5" />
+            <span className="hidden sm:inline">Offline Mode — Progress Saved Locally</span>
+            <span className="sm:hidden">Offline</span>
           </div>
         )}
       </div>
       )}
 
-      {/* Bottom-Left Screen-Space Combat Log */}
-      {gameMode !== 'title' && !hudCollapsed && (
+      {/* Combat Log: Compact single-line banner on Touch mode, full panel on Desktop */}
+      {gameMode !== 'title' && !hudCollapsed && showTouchControls && combatLog[0] && (
+        <div className="fixed top-[148px] md:top-[176px] left-[max(0.5rem,env(safe-area-inset-left))] z-10 max-w-[min(64vw,260px)] hud-panel rounded-lg px-2.5 py-1 text-[10px] text-slate-200 shadow-md pointer-events-none truncate">
+          {combatLog[0].text}
+        </div>
+      )}
+
+      {gameMode !== 'title' && !hudCollapsed && !showTouchControls && (
         <div className="fixed bottom-24 md:bottom-5 left-4 z-20 w-80 max-w-[90vw] hud-panel rounded-xl p-3 shadow-xl space-y-1.5 pointer-events-none">
           <div className="text-[11px] font-semibold text-slate-400 flex items-center justify-between">
             <span>Combat & World Log</span>
@@ -1527,10 +1711,16 @@ export default function App() {
 
       {/* Bottom-Right Naval Helm & Diving Oxygen Status Overlays */}
       {gameMode === 'playing' && !hudCollapsed && (shipHud || diveHud.isUnderwater || diveHud.oxygen < diveHud.maxOxygen) && (
-        <div className="fixed bottom-24 md:bottom-5 right-4 z-20 w-72 space-y-2">
+        <div
+          className={`fixed z-20 space-y-2 pointer-events-none ${
+            showTouchControls
+              ? 'bottom-52 sm:bottom-56 right-[max(0.75rem,env(safe-area-inset-right))] w-48 sm:w-60'
+              : 'bottom-24 md:bottom-5 right-4 w-72'
+          }`}
+        >
           {(diveHud.isUnderwater || diveHud.oxygen < diveHud.maxOxygen) && (
-            <div className="hud-panel rounded-xl p-3 shadow-xl space-y-1.5">
-              <div className="flex items-center justify-between text-xs">
+            <div className="hud-panel rounded-xl p-2.5 md:p-3 shadow-xl space-y-1.5">
+              <div className="flex items-center justify-between text-[11px] md:text-xs">
                 <span className="flex items-center gap-1.5 font-semibold text-cyan-300">
                   <Waves className="w-3.5 h-3.5" />
                   {diveHud.isUnderwater ? `Diving (${diveHud.depthMeters}m)` : 'Breath Recovering'}
@@ -1549,19 +1739,19 @@ export default function App() {
           )}
 
           {shipHud && (
-            <div className="hud-panel rounded-xl p-3 shadow-xl space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="flex items-center gap-1.5 font-semibold text-sky-300">
-                  <Ship className="w-3.5 h-3.5" />
+            <div className="hud-panel rounded-xl p-2.5 md:p-3 shadow-xl space-y-1.5 md:space-y-2">
+              <div className="flex items-center justify-between text-[11px] md:text-xs gap-1">
+                <span className="flex items-center gap-1.5 font-semibold text-sky-300 truncate">
+                  <Ship className="w-3.5 h-3.5 shrink-0" />
                   {shipHud.shipName}
                 </span>
-                <span className="font-mono-tabular text-slate-300">
-                  {shipHud.speedKnots} kn · Wind {shipHud.windKnots} kn
+                <span className="font-mono-tabular text-slate-300 shrink-0">
+                  {shipHud.speedKnots} kn
                 </span>
               </div>
-              <div className="space-y-1 text-[11px] font-mono-tabular">
+              <div className="space-y-1 text-[10px] md:text-[11px] font-mono-tabular">
                 <div className="flex justify-between text-slate-300">
-                  <span>Hull Integrity</span>
+                  <span>Hull</span>
                   <span>
                     {shipHud.hull}/{shipHud.maxHull}
                   </span>
@@ -1573,8 +1763,8 @@ export default function App() {
                   />
                 </div>
               </div>
-              {shipHud.atHelm && (
-                <div className="flex items-center justify-between gap-1.5 pt-1">
+              {shipHud.atHelm && !showTouchControls && (
+                <div className="flex items-center justify-between gap-1.5 pt-1 pointer-events-auto">
                   <button
                     type="button"
                     onClick={() => engineRef.current?.toggleShipAnchor()}
@@ -1598,8 +1788,33 @@ export default function App() {
         </div>
       )}
 
-      {/* Bottom-Center Unified Action Dock */}
-      {gameMode !== 'title' && !hudCollapsed && (
+      {/* Mobile Touch Virtual Joystick & Combat Pad */}
+      {gameMode === 'playing' && !hudCollapsed && showTouchControls && (
+        <MobileTouchControls
+          heroClass={player.appearance?.heroClass ?? 'warden'}
+          cooldowns={player.cooldowns}
+          isSwimming={Boolean(player.isSwimming)}
+          isCrouching={Boolean(player.isCrouching)}
+          isClimbing={player.isClimbing}
+          shipHud={shipHud}
+          primaryPrompt={prompts[0] || null}
+          onMoveStick={handleTouchMove}
+          onHoldState={handleTouchHold}
+          onAttack={() => engineRef.current?.performMeleeAttack()}
+          onJump={() => engineRef.current?.triggerJump()}
+          onDodge={() => engineRef.current?.triggerDodge()}
+          onToggleCrouch={() => engineRef.current?.triggerToggleCrouch()}
+          onInteract={() => engineRef.current?.triggerInteract()}
+          onCastSpell={(el) => engineRef.current?.castElementalSpell(el)}
+          onToggleAnchor={() => engineRef.current?.toggleShipAnchor()}
+          onFireBroadside={() => engineRef.current?.fireBroadsideCannons()}
+          onOpenWheel={() => setGestureOpen(true)}
+          onOpenVoice={() => setVoiceOpen(true)}
+        />
+      )}
+
+      {/* Desktop Bottom-Center Unified Action Dock */}
+      {gameMode !== 'title' && !hudCollapsed && !showTouchControls && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-20 hud-panel rounded-xl px-3 py-2 shadow-2xl flex items-center gap-1.5 max-w-[96vw] overflow-x-auto">
           <button
             type="button"

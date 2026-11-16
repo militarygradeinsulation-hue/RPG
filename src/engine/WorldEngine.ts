@@ -442,6 +442,8 @@ export class WorldEngine {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.domElement.style.touchAction = 'none';
+    this.renderer.domElement.style.userSelect = 'none';
     container.appendChild(this.renderer.domElement);
 
     // WebGL context-loss resilience per 3D spatial guidelines
@@ -509,6 +511,8 @@ export class WorldEngine {
       this.csm?.updateFrustums();
     };
     window.addEventListener('resize', this.onResizeHandler);
+    window.addEventListener('orientationchange', this.onResizeHandler);
+    window.visualViewport?.addEventListener('resize', this.onResizeHandler);
     document.addEventListener('visibilitychange', this.onVisibilityChange);
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(this.onResizeHandler);
@@ -1231,7 +1235,36 @@ export class WorldEngine {
     this.overworldGroup.add(this.companionMesh);
   }
 
-  // --- Player Actions ---
+  // --- Player & Virtual Touch Actions ---
+
+  public setVirtualMove(x: number, y: number, sprint?: boolean) {
+    this.input.setVirtualMove(x, y, sprint);
+  }
+
+  public setVirtualHold(kind: 'sprint' | 'block' | 'ascend' | 'dive', active: boolean) {
+    this.input.setVirtualHold(kind, active);
+  }
+
+  public triggerJump() {
+    if (this.gameMode !== 'playing') return;
+    this.handleJumpAction();
+  }
+
+  public triggerInteract() {
+    if (this.gameMode !== 'playing') return;
+    this.handleInteractAction();
+  }
+
+  public triggerDodge() {
+    this.performDodgeRoll();
+  }
+
+  public triggerToggleCrouch() {
+    if (this.gameMode !== 'playing') return;
+    if (!this.isSwimming && !this.atHelmShipId) {
+      this.isCrouching = !this.isCrouching;
+    }
+  }
 
   private handleJumpAction() {
     if (this.atHelmShipId) {
@@ -2293,15 +2326,21 @@ export class WorldEngine {
 
       let steer = 0;
       if (ship.id === this.atHelmShipId) {
-        if (keys['KeyW'] || keys['ArrowUp']) {
+        const throttleFwd =
+          (keys['KeyW'] || keys['ArrowUp'] ? 1 : 0) -
+          (keys['KeyS'] || keys['ArrowDown'] ? 1 : 0) +
+          this.input.virtualMoveY;
+        if (throttleFwd > 0.15) {
           ship.anchored = false;
-          ship.sailSetting = Math.min(1, ship.sailSetting + dt * 0.65);
-        }
-        if (keys['KeyS'] || keys['ArrowDown']) {
-          ship.sailSetting = Math.max(0, ship.sailSetting - dt * 0.75);
+          ship.sailSetting = Math.min(1, ship.sailSetting + dt * 0.65 * Math.min(1, throttleFwd));
+        } else if (throttleFwd < -0.15) {
+          ship.sailSetting = Math.max(0, ship.sailSetting - dt * 0.75 * Math.min(1, -throttleFwd));
         }
         if (keys['KeyA'] || keys['ArrowLeft']) steer += 1;
         if (keys['KeyD'] || keys['ArrowRight']) steer -= 1;
+        if (Math.abs(this.input.virtualMoveX) > 0.08) {
+          steer = THREE.MathUtils.clamp(steer - this.input.virtualMoveX, -1, 1);
+        }
       } else if (!ship.isPlayerOwned) {
         // AI Ship patrol & pirate broadsides!
         steer = Math.sin(elapsed * 0.3 + (ship.isHostile ? 1.5 : 0)) * 0.35;
@@ -2413,19 +2452,20 @@ export class WorldEngine {
   }
 
   private stepPlayerOnFootOrSwim(dt: number, elapsed: number, keys: Record<string, boolean>) {
-    let moveForward = 0;
-    let moveRight = 0;
+    let moveForward = this.input.virtualMoveY;
+    let moveRight = this.input.virtualMoveX;
     if (keys['KeyW'] || keys['ArrowUp']) moveForward += 1;
     if (keys['KeyS'] || keys['ArrowDown']) moveForward -= 1;
     if (keys['KeyD'] || keys['ArrowRight']) moveRight += 1;
     if (keys['KeyA'] || keys['ArrowLeft']) moveRight -= 1;
 
     const len = Math.hypot(moveForward, moveRight);
+    const analogScale = Math.min(1, len);
     let moveDirX = 0;
     let moveDirZ = 0;
-    if (len > 0) {
-      const nf = moveForward / len;
-      const nr = moveRight / len;
+    if (len > 0.04) {
+      const nf = (moveForward / len) * analogScale;
+      const nr = (moveRight / len) * analogScale;
       const fwdX = -Math.sin(this.cameraYaw);
       const fwdZ = -Math.cos(this.cameraYaw);
       const rightX = Math.cos(this.cameraYaw);
@@ -2434,18 +2474,25 @@ export class WorldEngine {
       moveDirZ = fwdZ * nf + rightZ * nr;
     }
 
+    const climbOrDiveHeld = Boolean(keys['KeyC'] || this.input.virtualDive);
+
     // Climbable watchtower grab check
     const nearTower = !this.activeDungeon
       ? this.climbTowers.find((tw) => Math.hypot(tw.x - this.playerState.x, tw.z - this.playerState.z) < 3.4)
       : undefined;
-    if (nearTower && keys['KeyC'] && this.playerState.stamina > 6) {
+    if (nearTower && climbOrDiveHeld && this.playerState.stamina > 6) {
       this.playerState.isClimbing = true;
       this.isCrouching = false;
-    } else if (!nearTower || !keys['KeyC']) {
+    } else if (!nearTower || !climbOrDiveHeld) {
       this.playerState.isClimbing = false;
     }
 
-    const sprinting = Boolean((keys['ShiftLeft'] || keys['ShiftRight']) && len > 0 && this.playerState.stamina > 2 && !this.isCrouching);
+    const sprinting = Boolean(
+      (keys['ShiftLeft'] || keys['ShiftRight'] || this.input.virtualSprint) &&
+        len > 0.15 &&
+        this.playerState.stamina > 2 &&
+        !this.isCrouching
+    );
     if (sprinting) {
       this.playerState.stamina = Math.max(0, this.playerState.stamina - dt * 15);
     } else if (this.playerState.isClimbing) {
@@ -2478,10 +2525,10 @@ export class WorldEngine {
     // Damped direction control keeps starts, stops and keyboard diagonals
     // responsive without instantaneous velocity changes. The fixed-step
     // coefficient gives the same feel at different monitor refresh rates.
-    const moveBlend = 1 - Math.exp(-dt * (len > 0 ? 15 : 21));
+    const moveBlend = 1 - Math.exp(-dt * (len > 0.04 ? 15 : 21));
     this.smoothedMoveX += (moveDirX - this.smoothedMoveX) * moveBlend;
     this.smoothedMoveZ += (moveDirZ - this.smoothedMoveZ) * moveBlend;
-    if (len === 0 && Math.hypot(this.smoothedMoveX, this.smoothedMoveZ) < 0.002) {
+    if (len <= 0.04 && Math.hypot(this.smoothedMoveX, this.smoothedMoveZ) < 0.002) {
       this.smoothedMoveX = 0;
       this.smoothedMoveZ = 0;
     }
@@ -2501,8 +2548,8 @@ export class WorldEngine {
       isGrounded: this.isGrounded,
       isCrouching: this.isCrouching,
       isClimbing: this.playerState.isClimbing,
-      ascendHeld: Boolean(keys['Space']),
-      diveHeld: Boolean(keys['KeyC']),
+      ascendHeld: Boolean(keys['Space'] || this.input.virtualAscend),
+      diveHeld: climbOrDiveHeld,
       activeDungeon: this.activeDungeon ? { minX: -18.5, maxX: 18.5, minZ: -44.5, maxZ: 13.0 } : null,
       colliders: this.colliders,
       extraColliders: this.activeDungeon ? undefined : this.settlements.colliders.length ? this.vegetation.colliders.concat(this.settlements.colliders) : this.vegetation.colliders,
@@ -3343,6 +3390,8 @@ export class WorldEngine {
     this.disposed = true;
     cancelAnimationFrame(this.frameId);
     window.removeEventListener('resize', this.onResizeHandler);
+    window.removeEventListener('orientationchange', this.onResizeHandler);
+    window.visualViewport?.removeEventListener('resize', this.onResizeHandler);
     document.removeEventListener('visibilitychange', this.onVisibilityChange);
     this.resizeObserver?.disconnect();
     this.input.dispose();

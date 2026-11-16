@@ -105,21 +105,31 @@ export const GRAPHICS_PRESETS: Record<ResolvedGraphicsTier, GraphicsTierConfig> 
   },
 };
 
+export function isMobileFormFactor(): boolean {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  if (/Mobi|Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(ua)) return true;
+  // iPadOS Safari in Desktop Mode reports Macintosh + multiple touch points
+  if (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1) return true;
+  if (window.matchMedia?.('(pointer: coarse)').matches && navigator.maxTouchPoints > 0) return true;
+  return false;
+}
+
 export function detectInitialGpuTier(renderer: THREE.WebGLRenderer, isSoftwareGl: boolean): ResolvedGraphicsTier {
-  if (isSoftwareGl) return 'low';
+  if (isSoftwareGl || isMobileFormFactor()) return 'low';
   try {
     const gl = renderer.getContext();
     const ext = gl.getExtension('WEBGL_debug_renderer_info');
     const rawRenderer = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER) || '');
     if (/SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(rawRenderer)) return 'low';
+    if (/UHD|HD Graphics|Mali|Adreno|PowerVR|Apple GPU|Vega 3|Vega 6/i.test(rawRenderer)) {
+      return /Iris Xe|Arc/i.test(rawRenderer) ? 'medium' : 'low';
+    }
     if (/RTX|RX 6[6-9]|RX 7|M2 Pro|M2 Max|M3|M4|GTX 1660|GTX 1070|GTX 1080|Radeon Pro/i.test(rawRenderer)) {
       return 'high';
     }
-    if (/Apple M1|Apple GPU|GTX|Iris Xe|Arc/i.test(rawRenderer)) {
-      return /Iris Xe|UHD|HD Graphics/i.test(rawRenderer) ? 'medium' : 'high';
-    }
-    if (/UHD|HD Graphics|Mali|Adreno|Vega 3|Vega 6/i.test(rawRenderer)) {
-      return 'low';
+    if (/Apple M1|GTX|Iris Xe|Arc/i.test(rawRenderer)) {
+      return /Iris Xe/i.test(rawRenderer) ? 'medium' : 'high';
     }
   } catch {
     // Fallback to medium

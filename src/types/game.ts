@@ -8,6 +8,7 @@ export type FactionId = 'suncrest_order' | 'verdant_circle' | 'ironbound_guild';
 export type AccessibilityTheme = 'default' | 'high_contrast' | 'colorblind';
 export type GraphicsPreset = 'auto' | 'low' | 'medium' | 'high' | 'ultra';
 export type ResolvedGraphicsTier = 'low' | 'medium' | 'high' | 'ultra';
+export type TouchControlsMode = 'auto' | 'on' | 'off';
 
 export interface PerfTelemetry {
   fps: number;
@@ -312,6 +313,7 @@ export interface AccessibilitySettings {
   sfxVolume: number;
   graphicsPreset: GraphicsPreset;
   showPerfHud: boolean;
+  touchControls?: TouchControlsMode;
 }
 
 export interface PlayerState {
