@@ -1740,6 +1740,7 @@ export default function App() {
         open={activeModal === 'quests' || activeModal === 'journal'}
         initialTab={activeModal === 'journal' ? 'journal' : 'quests'}
         quests={quests}
+        inventory={inventory}
         journal={journal}
         moralAlignment={player.moralAlignment}
         sealsRestored={sealsRestored}
