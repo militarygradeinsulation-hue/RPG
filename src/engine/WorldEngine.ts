@@ -200,7 +200,7 @@ export interface WorldCallbacks {
   onPlayerStatsUpdate: (patch: Partial<PlayerState>) => void;
   onGainXpAndGold: (xp: number, gold: number) => void;
   onHarvestItem: (itemId: string, qty: number, biomeId: BiomeId) => void;
-  onEnemyDefeated: (kind: 'wraith' | 'golem' | 'stalker', biomeId: BiomeId) => void;
+  onEnemyDefeated: (kind: 'wraith' | 'golem' | 'stalker', biomeId: BiomeId, enemyId: string) => void;
   onBiomeDiscover: (biomeId: BiomeId) => void;
   onPoiDiscover: (poiId: string, name: string) => void;
   onInteractPrompt: (prompts: NearbyPrompt[]) => void;
@@ -875,7 +875,7 @@ export class WorldEngine {
       this.brushPatches.push({ id: `brush_${i}`, x: bp.x, z: bp.z, burningTimer: 0, burnedOut: false, mesh: m });
     });
 
-    const enemySpecs: { kind: 'wraith' | 'golem' | 'stalker'; name: string; x: number; z: number }[] = [
+    const enemySpecs: { kind: 'wraith' | 'golem' | 'stalker'; name: string; x: number; z: number; id?: string }[] = [
       { kind: 'wraith', name: 'Blight Wraith', x: -46, z: 38 },
       { kind: 'wraith', name: 'Grove Stalker Wraith', x: -60, z: 54 },
       { kind: 'golem', name: 'Obsidian Ash Golem', x: 48, z: 36 },
@@ -883,13 +883,13 @@ export class WorldEngine {
       { kind: 'stalker', name: 'Tempest Stalker', x: -12, z: -64 },
       { kind: 'stalker', name: 'Spire Arc Hunter', x: 14, z: -68 },
       // Frontier guardians are placed outside each island's central waystones.
-      { kind: 'stalker', name: 'Moonveil Oathkeeper', x: -254, z: 341 },
+      { kind: 'stalker', name: 'Moonveil Oathkeeper', id: 'guardian_moonveil', x: -254, z: 341 },
       { kind: 'wraith', name: 'Moonlit Remnant', x: -297, z: 321 },
-      { kind: 'golem', name: 'Thornheart Sentinel', x: -74, z: 427 },
+      { kind: 'golem', name: 'Thornheart Sentinel', id: 'guardian_thornwild', x: -74, z: 427 },
       { kind: 'wraith', name: 'Rootbound Shade', x: -112, z: 385 },
-      { kind: 'golem', name: 'Crownfire Guardian', x: 244, z: 383 },
+      { kind: 'golem', name: 'Crownfire Guardian', id: 'guardian_ashen', x: 244, z: 383 },
       { kind: 'stalker', name: 'Ashen Watcher', x: 204, z: 340 },
-      { kind: 'stalker', name: 'Stormglass Harbinger', x: 54, z: 547 },
+      { kind: 'stalker', name: 'Stormglass Harbinger', id: 'guardian_stormglass', x: 54, z: 547 },
       { kind: 'wraith', name: 'Navigator Echo', x: 15, z: 511 },
     ];
     enemySpecs.forEach((es, i) => {
@@ -898,7 +898,7 @@ export class WorldEngine {
       this.overworldGroup.add(parts.group);
       const maxHp = es.kind === 'golem' ? 140 : es.kind === 'stalker' ? 110 : 90;
       this.enemies.push({
-        id: `enemy_${i}`,
+        id: es.id ?? `enemy_${i}`,
         kind: es.kind,
         name: es.name,
         biomeId: getBiomeAt(es.x, es.z),
@@ -2063,7 +2063,7 @@ export class WorldEngine {
         this.callbacks.onCombatLog(`Slayed ${enemy.name}! (+180 XP, +140g)`, 'quest');
       } else {
         this.callbacks.onGainXpAndGold(45, 24);
-        this.callbacks.onEnemyDefeated(enemy.kind as 'wraith' | 'golem' | 'stalker', enemy.biomeId);
+        this.callbacks.onEnemyDefeated(enemy.kind as 'wraith' | 'golem' | 'stalker', enemy.biomeId, enemy.id);
         this.callbacks.onCombatLog(`Vanquished ${enemy.name} (+45 XP, +24g, +1 Blight Ichor).`, 'quest');
       }
       if (this.activeDungeon && this.dungeonEnemies.every((d) => !d.alive)) {
