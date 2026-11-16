@@ -204,6 +204,7 @@ export interface WorldCallbacks {
   onHarvestItem: (itemId: string, qty: number, biomeId: BiomeId) => void;
   onEnemyDefeated: (kind: 'wraith' | 'golem' | 'stalker', biomeId: BiomeId, enemyId: string) => void;
   onBiomeDiscover: (biomeId: BiomeId) => void;
+  onVillageConversation: (settlementId: string, settlementName: string, biome: BiomeId) => void;
   onPoiDiscover: (poiId: string, name: string) => void;
   onInteractPrompt: (prompts: NearbyPrompt[]) => void;
   onTriggerInteract: (target: { kind: NearbyPrompt['kind']; id: string }) => void;
@@ -1259,10 +1260,13 @@ export class WorldEngine {
     else if (t.kind === 'chest') this.lootDungeonChest(t.id);
     else if (t.kind === 'salvage') this.lootSeaWreck(t.id);
     else if (t.kind === 'villager') {
-      const response = this.livingSettlements.speakToResident(t.id);
-      if (response) {
+      const conversation = this.livingSettlements.speakToResident(t.id);
+      if (conversation) {
         soundEngine.triggerCue('quest', 'Village Conversation');
-        this.callbacks.onCombatLog(response, 'world');
+        this.callbacks.onCombatLog(conversation.message, 'world');
+        this.callbacks.onVillageConversation(
+          conversation.settlementId, conversation.settlementName, conversation.biomeId
+        );
       }
     }
     else if (t.kind === 'ship_helm') {

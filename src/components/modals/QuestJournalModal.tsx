@@ -1,11 +1,14 @@
+import { hasVillageContractMaterials } from '../../data/VillageContracts';
+import { ITEMS } from '../../data/worldData';
 import React, { useEffect, useState } from 'react';
 import { BookOpen, Compass, ExternalLink, Loader2, ScrollText, Search, X } from 'lucide-react';
-import { JournalEntry, QuestChoice, QuestState, SeasonType, WeatherType } from '../../types/game';
+import { InventoryItem, JournalEntry, QuestChoice, QuestState, SeasonType, WeatherType } from '../../types/game';
 
 interface QuestJournalModalProps {
   open: boolean;
   initialTab?: 'quests' | 'journal' | 'oracle';
   quests: QuestState[];
+  inventory: InventoryItem[];
   journal: JournalEntry[];
   moralAlignment: number;
   sealsRestored: number;
@@ -98,6 +101,7 @@ export const QuestJournalModal: React.FC<QuestJournalModalProps> = ({
   open,
   initialTab = 'quests',
   quests,
+  inventory,
   journal,
   moralAlignment,
   sealsRestored,
@@ -254,6 +258,16 @@ export const QuestJournalModal: React.FC<QuestJournalModalProps> = ({
                       ))}
                     </ul>
 
+                    {q.requiredItemId && q.status === 'active' && (
+                      <div className="rounded-md bg-slate-800/70 px-3 py-2 text-xs text-amber-100">
+                        Village supplies: {ITEMS[q.requiredItemId]?.name || q.requiredItemId} {' '}
+                        {inventory.find(item => item.id === q.requiredItemId)?.qty ?? 0}/{q.requiredItemQty ?? 0}
+                        {!hasVillageContractMaterials(q, inventory) && (
+                          <span className="ml-2 text-slate-300">Collect the remaining supplies before you decide.</span>
+                        )}
+                      </div>
+                    )}
+
                     {q.status !== 'completed' && q.choices && q.step >= (q.maxSteps === 3 ? 2 : 1) && (
                       <div className="pt-2 border-t border-white/10 space-y-2">
                         <div className="text-xs font-semibold text-amber-300">Moral Decision Available:</div>
@@ -263,7 +277,8 @@ export const QuestJournalModal: React.FC<QuestJournalModalProps> = ({
                               key={ch.id}
                               type="button"
                               onClick={() => onResolveChoice(q.id, ch)}
-                              className="text-left p-3 rounded-lg bg-slate-800 hover:bg-slate-700 border border-white/10 text-xs space-y-1"
+                              disabled={!hasVillageContractMaterials(q, inventory)}
+                              className="text-left p-3 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed border border-white/10 text-xs space-y-1"
                             >
                               <div className="font-semibold text-white">{ch.label}</div>
                               <div className="text-slate-400">{ch.consequenceText}</div>
