@@ -593,7 +593,7 @@ export class WorldEngine {
 
     // Deterministic inhabited settlements beyond the original fixed villages.
     // The streaming system creates and retires only the 3x3 nearby cell region.
-    this.livingSettlements = new LivingSettlementSystem();
+    this.livingSettlements = new LivingSettlementSystem(this.stonePbr, this.woodPbr);
     this.livingSettlements.update(this.playerState.x, this.playerState.z, this.origin.originX, this.origin.originZ);
     this.overworldGroup.add(this.livingSettlements.group);
 
