@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { createCharacter, appearanceToOptions, NPC_LOOKS } from './characters.js';
+import type { Character, CharacterAppearance } from './characters.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { ElementType, FactionId } from '../types/game';
 import { createCrystalMaterial, PBRTextureSet } from '../render/MaterialLibrary';
@@ -129,317 +131,51 @@ export function createContactShadow(radius: number, opacity = 0.8): THREE.Mesh {
 
 export interface ArticulatedPlayer {
   group: THREE.Group;
+  /** Holds the rig. Squash/stretch is applied here. */
   bodyPivot: THREE.Group;
-  leftLeg: THREE.Group;
-  rightLeg: THREE.Group;
-  leftArm: THREE.Group;
-  rightArm: THREE.Group;
-  shield: THREE.Group;
-  cape: THREE.Mesh;
-  halo: THREE.Mesh;
-  bladeGlow: THREE.Mesh;
+  /** Procedural rigged character (see characters.js). Drive it with character.update(dt, state). */
+  character: Character;
 }
 
-export function createPlayerModel(): ArticulatedPlayer {
+/** Builds the player from a saved appearance (character creator). Falls back to the default Seal Warden. */
+export function createPlayerModel(appearance?: Partial<CharacterAppearance> | null): ArticulatedPlayer {
   const group = new THREE.Group();
   const bodyPivot = new THREE.Group();
   group.add(bodyPivot);
-
-  group.add(createContactShadow(0.95, 0.85));
-
-  const armorMat = new THREE.MeshStandardMaterial({
-    color: 0x334155,
-    metalness: 0.82,
-    roughness: 0.24,
-  });
-  const darkIronMat = new THREE.MeshStandardMaterial({
-    color: 0x1e293b,
-    metalness: 0.72,
-    roughness: 0.35,
-  });
-  const clothMat = new THREE.MeshStandardMaterial({
-    color: 0x172554,
-    metalness: 0.05,
-    roughness: 0.88,
-  });
-  const goldMat = new THREE.MeshStandardMaterial({
-    color: 0xf59e0b,
-    metalness: 0.88,
-    roughness: 0.2,
-  });
-  const leatherMat = new THREE.MeshStandardMaterial({
-    color: 0x451a03,
-    roughness: 0.75,
-    metalness: 0.12,
-  });
-  const visorMat = new THREE.MeshStandardMaterial({
-    color: 0x38bdf8,
-    emissive: 0x38bdf8,
-    emissiveIntensity: 1.8,
-    roughness: 0.15,
-  });
-
-  // Sculpted Legs with Boots + Knee Guards
-  const makeLeg = (side: number) => {
-    const leg = new THREE.Group();
-    leg.position.set(side * 0.2, 0.82, 0);
-    const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(0.13, 0.28, 6, 10), darkIronMat);
-    thigh.position.y = -0.22;
-    thigh.castShadow = true;
-    const knee = new THREE.Mesh(new THREE.SphereGeometry(0.14, 10, 8), goldMat);
-    knee.position.set(0, -0.4, 0.05);
-    knee.scale.set(0.9, 0.9, 0.65);
-    const boot = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 0.42, 10), leatherMat);
-    boot.position.y = -0.61;
-    boot.castShadow = true;
-    leg.add(thigh, knee, boot);
-    return leg;
-  };
-  const leftLeg = makeLeg(-1);
-  const rightLeg = makeLeg(1);
-  bodyPivot.add(leftLeg, rightLeg);
-
-  // Sculpted Lathe Cuirass & Tassets
-  const cuirassProfile = [
-    new THREE.Vector2(0.0, 0.0),
-    new THREE.Vector2(0.32, 0.05),
-    new THREE.Vector2(0.25, 0.3),
-    new THREE.Vector2(0.34, 0.68),
-    new THREE.Vector2(0.24, 0.88),
-    new THREE.Vector2(0.0, 0.92),
-  ];
-  const torso = new THREE.Mesh(new THREE.LatheGeometry(cuirassProfile, 14), armorMat);
-  torso.position.y = 0.78;
-  torso.scale.set(1.05, 1, 0.84);
-  torso.castShadow = true;
-  bodyPivot.add(torso);
-
-  // Chest Crest & Belt
-  const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.3, 0.11, 12), leatherMat);
-  belt.position.y = 0.88;
-  belt.scale.set(1.05, 1, 0.88);
-  const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.13, 0.08), goldMat);
-  buckle.position.set(0, 0.88, 0.25);
-  const chestEmblem = new THREE.Mesh(new THREE.OctahedronGeometry(0.1, 0), visorMat);
-  chestEmblem.position.set(0, 1.32, 0.26);
-  chestEmblem.scale.set(0.8, 1.2, 0.45);
-  bodyPivot.add(belt, buckle, chestEmblem);
-
-  // Layered Engraved Pauldrons
-  const pauldronGeo = new THREE.SphereGeometry(0.23, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.6);
-  [-1, 1].forEach((side) => {
-    const pauldron = new THREE.Mesh(pauldronGeo, armorMat);
-    pauldron.position.set(side * 0.42, 1.49, 0);
-    pauldron.rotation.z = -side * 0.42;
-    pauldron.castShadow = true;
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.025, 8, 16), goldMat);
-    rim.position.set(side * 0.43, 1.42, 0);
-    rim.rotation.x = Math.PI / 2;
-    rim.rotation.y = side * 0.42;
-    bodyPivot.add(pauldron, rim);
-  });
-
-  // Flowing Tapered Extruded Cape
-  const capeShape = new THREE.Shape();
-  capeShape.moveTo(-0.34, 0);
-  capeShape.lineTo(0.34, 0);
-  capeShape.lineTo(0.46, -1.08);
-  capeShape.quadraticCurveTo(0, -1.2, -0.46, -1.08);
-  capeShape.closePath();
-  const capeGeo = new THREE.ExtrudeGeometry(capeShape, {
-    depth: 0.035,
-    bevelEnabled: true,
-    bevelThickness: 0.015,
-    bevelSize: 0.015,
-    bevelSegments: 2,
-  });
-  const cape = new THREE.Mesh(capeGeo, clothMat);
-  cape.position.set(0, 1.56, -0.26);
-  cape.rotation.x = 0.16;
-  cape.castShadow = true;
-  bodyPivot.add(cape);
-
-  // Sculpted Hooded Helm & Visor
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 14, 12), darkIronMat);
-  head.position.set(0, 1.82, 0);
-  head.castShadow = true;
-  const hoodProfile = [
-    new THREE.Vector2(0.28, 0.0),
-    new THREE.Vector2(0.31, 0.18),
-    new THREE.Vector2(0.24, 0.42),
-    new THREE.Vector2(0.05, 0.56),
-  ];
-  const hood = new THREE.Mesh(new THREE.LatheGeometry(hoodProfile, 12), clothMat);
-  hood.position.set(0, 1.68, -0.04);
-  hood.rotation.x = -0.22;
-  hood.castShadow = true;
-  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.06, 0.15), visorMat);
-  visor.position.set(0, 1.82, 0.16);
-  bodyPivot.add(head, hood, visor);
-
-  // Right Arm + Beveled Extruded Runeblade
-  const rightArm = new THREE.Group();
-  rightArm.position.set(0.47, 1.42, 0.08);
-  const forearm = new THREE.Mesh(new THREE.CapsuleGeometry(0.095, 0.42, 6, 10), armorMat);
-  forearm.rotation.x = Math.PI / 3;
-  forearm.position.set(0, -0.15, 0.18);
-  forearm.castShadow = true;
-  rightArm.add(forearm);
-
-  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.34, 8), leatherMat);
-  grip.rotation.x = Math.PI / 2;
-  grip.position.set(0, -0.26, 0.36);
-  const crossguard = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.05, 0.06), goldMat);
-  crossguard.position.set(0, -0.26, 0.52);
-  const pommel = new THREE.Mesh(new THREE.OctahedronGeometry(0.055, 0), goldMat);
-  pommel.position.set(0, -0.26, 0.18);
-  rightArm.add(grip, crossguard, pommel);
-
-  const bladeShape = new THREE.Shape();
-  bladeShape.moveTo(0, -0.05);
-  bladeShape.lineTo(1.08, -0.035);
-  bladeShape.lineTo(1.26, 0);
-  bladeShape.lineTo(1.08, 0.035);
-  bladeShape.lineTo(0, 0.05);
-  bladeShape.closePath();
-  const bladeGeo = new THREE.ExtrudeGeometry(bladeShape, {
-    depth: 0.025,
-    bevelEnabled: true,
-    bevelThickness: 0.012,
-    bevelSize: 0.01,
-    bevelSegments: 2,
-  });
-  bladeGeo.rotateY(-Math.PI / 2);
-  const bladeGlow = new THREE.Mesh(
-    bladeGeo,
-    new THREE.MeshStandardMaterial({
-      color: 0xfef3c7,
-      emissive: 0xf59e0b,
-      emissiveIntensity: 0.85,
-      metalness: 0.92,
-      roughness: 0.14,
-    })
-  );
-  bladeGlow.position.set(0.012, -0.26, 0.53);
-  bladeGlow.castShadow = true;
-  rightArm.add(bladeGlow);
-  bodyPivot.add(rightArm);
-
-  // Left Arm + Heraldic Warden Shield
-  const leftArm = new THREE.Group();
-  leftArm.position.set(-0.47, 1.42, 0.08);
-  const leftForearm = new THREE.Mesh(new THREE.CapsuleGeometry(0.095, 0.4, 6, 10), armorMat);
-  leftForearm.rotation.x = Math.PI / 3.4;
-  leftForearm.position.set(0, -0.14, 0.14);
-  leftForearm.castShadow = true;
-  leftArm.add(leftForearm);
-
-  const shield = new THREE.Group();
-  shield.position.set(-0.14, -0.18, 0.24);
-  const shieldPlate = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.26, 0.06, 6), armorMat);
-  shieldPlate.rotation.x = Math.PI / 2;
-  const shieldBoss = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 8), goldMat);
-  shieldBoss.position.z = 0.04;
-  shield.add(shieldPlate, shieldBoss);
-  leftArm.add(shield);
-  bodyPivot.add(leftArm);
-
-  // Arcane Seal Halo
-  const halo = new THREE.Mesh(
-    new THREE.TorusGeometry(0.34, 0.024, 10, 28),
-    new THREE.MeshStandardMaterial({
-      color: 0xfde68a,
-      emissive: 0xf59e0b,
-      emissiveIntensity: 1.35,
-      metalness: 0.8,
-      roughness: 0.2,
-    })
-  );
-  halo.position.set(0, 1.48, -0.4);
-  bodyPivot.add(halo);
-
-  return { group, bodyPivot, leftLeg, rightLeg, leftArm, rightArm, shield, cape, halo, bladeGlow };
+  group.add(createContactShadow(0.7, 0.8));
+  const character = createCharacter(appearanceToOptions(appearance));
+  bodyPivot.add(character.root);
+  return { group, bodyPivot, character };
 }
 
-export function createNpcModel(factionId: FactionId, isCompanion: boolean): THREE.Group {
+const FACTION_FALLBACK_LOOK: Record<FactionId, string> = {
+  suncrest_order: 'seal_mage',
+  verdant_circle: 'ranger',
+  ironbound_guild: 'guard',
+};
+
+/**
+ * Builds a named NPC. Known NPC ids get a hand-tuned look from NPC_LOOKS; anyone else
+ * falls back to a faction look. The animated character is stored in group.userData.character.
+ */
+export function createNpcModel(factionId: FactionId, isCompanion: boolean, npcId?: string): THREE.Group {
   const group = new THREE.Group();
-  group.add(createContactShadow(0.85, 0.72));
+  group.add(createContactShadow(0.6, 0.72));
 
-  const palette: Record<FactionId, number> = {
-    suncrest_order: 0xd97706,
-    verdant_circle: 0x059669,
-    ironbound_guild: 0x991b1b,
-  };
-  const tunicColor = palette[factionId];
+  const look = (npcId && NPC_LOOKS[npcId]) || FACTION_FALLBACK_LOOK[factionId];
+  const character = createCharacter(look as string | Record<string, unknown>);
+  group.add(character.root);
+  group.userData.character = character;
 
-  const tunicMat = new THREE.MeshStandardMaterial({ color: tunicColor, roughness: 0.82, metalness: 0.08 });
-  const leatherMat = new THREE.MeshStandardMaterial({ color: 0x451a03, roughness: 0.7, metalness: 0.15 });
-  const skinMat = new THREE.MeshStandardMaterial({ color: 0xdcb898, roughness: 0.62 });
-  const trimMat = new THREE.MeshStandardMaterial({ color: 0xfde68a, metalness: 0.78, roughness: 0.22 });
-
-  // Sculpted Lathe Robe / Tunic Skirt
-  const robeProfile = [
-    new THREE.Vector2(0.0, 0.0),
-    new THREE.Vector2(0.4, 0.02),
-    new THREE.Vector2(0.34, 0.45),
-    new THREE.Vector2(0.25, 0.92),
-    new THREE.Vector2(0.32, 1.42),
-    new THREE.Vector2(0.18, 1.56),
-    new THREE.Vector2(0.0, 1.58),
-  ];
-  const body = new THREE.Mesh(new THREE.LatheGeometry(robeProfile, 14), tunicMat);
-  body.castShadow = true;
-  body.receiveShadow = true;
-  group.add(body);
-
-  // Leather Sash & Shoulder Mantle
-  const sash = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.29, 0.14, 12), leatherMat);
-  sash.position.y = 0.94;
-  const mantle = new THREE.Mesh(new THREE.CylinderGeometry(0.37, 0.33, 0.2, 12), trimMat);
-  mantle.position.y = 1.48;
-  mantle.castShadow = true;
-  group.add(sash, mantle);
-
-  // Head + Facial Silhouette
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 14, 12), skinMat);
-  head.position.y = 1.78;
-  head.castShadow = true;
-  group.add(head);
-
-  if (isCompanion) {
-    // Hooded Ranger Crest + Curved Bow/Staff
-    const hat = new THREE.Mesh(new THREE.ConeGeometry(0.27, 0.4, 10), tunicMat);
-    hat.position.set(0, 2.02, -0.02);
-    hat.rotation.x = -0.15;
-    group.add(hat);
-
-    const curve = new THREE.CatmullRomCurve3([
-      new THREE.Vector3(0.38, 0.35, 0.1),
-      new THREE.Vector3(0.42, 1.15, 0.22),
-      new THREE.Vector3(0.36, 1.95, 0.08),
-    ]);
-    const staff = new THREE.Mesh(new THREE.TubeGeometry(curve, 12, 0.03, 6, false), leatherMat);
-    const orb = new THREE.Mesh(
-      new THREE.OctahedronGeometry(0.1, 0),
-      new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x0ea5e9, emissiveIntensity: 1.5 })
-    );
-    orb.position.set(0.36, 2.04, 0.08);
-    group.add(staff, orb);
-  } else {
-    const circlet = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.03, 8, 16), trimMat);
-    circlet.rotation.x = Math.PI / 2;
-    circlet.position.y = 1.88;
-    group.add(circlet);
-  }
-
-  // Subtle Ground Ring
+  // Subtle ground ring marks interactable / companion NPCs
   const ring = new THREE.Mesh(
-    new THREE.RingGeometry(0.5, 0.58, 28),
+    new THREE.RingGeometry(0.5, 0.56, 32),
     new THREE.MeshBasicMaterial({
       color: isCompanion ? 0x38bdf8 : 0xfbbf24,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.68,
+      opacity: 0.45,
+      depthWrite: false,
     })
   );
   ring.rotation.x = -Math.PI / 2;

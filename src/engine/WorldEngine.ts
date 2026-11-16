@@ -78,6 +78,7 @@ import {
   DragonModelParts,
   EnemyModelParts,
 } from './models';
+import type { Character, CharacterAppearance } from './characters.js';
 
 export type EngineGameMode = 'title' | 'playing' | 'paused';
 
@@ -346,6 +347,8 @@ export class WorldEngine {
   private hitstopTimer = 0;
   private screenShake = 0;
   private walkPhase = 0;
+  private readonly lastAnimPos = new THREE.Vector3();
+  private lastAnimYaw = 0;
   private playerSquashY = 1;
   private lastFootstepPhase = 0;
 
@@ -597,7 +600,7 @@ export class WorldEngine {
     this.setupFaunaAndDragons();
 
     // 8. Player Character
-    this.playerModel = createPlayerModel();
+    this.playerModel = createPlayerModel(this.playerState.appearance);
     const py = groundHeightAt(this.playerState.x, this.playerState.z);
     this.playerState.y = Math.max(py, this.playerState.y);
     this.playerModel.group.position.set(this.playerState.x, this.playerState.y, this.playerState.z);
@@ -786,7 +789,7 @@ export class WorldEngine {
 
   private setupNpcsAndInteractiveProps() {
     this.npcs.forEach((npc) => {
-      const mesh = createNpcModel(npc.factionId, npc.isCompanionCapable);
+      const mesh = createNpcModel(npc.factionId, npc.isCompanionCapable, npc.id);
       mesh.position.set(npc.x, groundHeightAt(npc.x, npc.z), npc.z);
       this.overworldGroup.add(mesh);
       this.npcMeshes.set(npc.id, mesh);
@@ -1142,6 +1145,19 @@ export class WorldEngine {
     }
   }
 
+  /** Rebuilds the player model from a new appearance (called by the character creator). */
+  public setPlayerAppearance(appearance: CharacterAppearance) {
+    this.playerState.appearance = appearance;
+    const old = this.playerModel;
+    const next = createPlayerModel(appearance);
+    next.group.position.copy(old.group.position);
+    next.group.rotation.copy(old.group.rotation);
+    this.scene.remove(old.group);
+    old.character.dispose();
+    this.scene.add(next.group);
+    this.playerModel = next;
+  }
+
   private syncCompanionMesh(companionId: string | null) {
     if (this.companionMesh) {
       this.overworldGroup.remove(this.companionMesh);
@@ -1149,7 +1165,7 @@ export class WorldEngine {
     }
     if (!companionId) return;
     const npc = this.npcs.find((n) => n.id === companionId);
-    this.companionMesh = createNpcModel(npc ? npc.factionId : 'verdant_circle', true);
+    this.companionMesh = createNpcModel(npc ? npc.factionId : 'verdant_circle', true, companionId);
     this.companionPos.set(this.playerState.x - 2.2, this.playerState.y, this.playerState.z + 2.0);
     this.companionMesh.position.set(
       this.origin.toLocalX(this.companionPos.x),
@@ -1355,6 +1371,7 @@ export class WorldEngine {
     this.meleeComboResetTimer = 1.4;
     this.playerState.cooldowns.melee = this.meleeComboStep === 3 ? 0.56 : 0.34;
     this.attackSwingTimer = 0.28;
+    this.playerModel.character.play('strike');
     this.playerSquashY = 0.88;
     soundEngine.triggerCue('melee', this.meleeComboStep === 3 ? 'Heavy Cleave!' : 'Blade Strike');
 
@@ -1402,6 +1419,7 @@ export class WorldEngine {
     this.playerState.cooldowns[element] = (element === 'gale' ? 2.2 : 2.6) * stormCdMult;
     this.playerState.elementalUses[element] += 1;
     this.attackSwingTimer = 0.32;
+    this.playerModel.character.play('cast');
     this.playerSquashY = 1.18;
     this.screenShake = 0.22;
     this.recentCombatTimer = 6.5;
@@ -2328,9 +2346,16 @@ export class WorldEngine {
       );
       this.companionMesh.lookAt(
         this.origin.toLocalX(this.playerState.x),
-        this.playerState.y,
+        this.companionPos.y,
         this.origin.toLocalZ(this.playerState.z)
       );
+      const cPrev = (this.companionMesh.userData.lastPos as THREE.Vector3 | undefined) ?? this.companionPos.clone();
+      const cSpeed = dt > 0 ? Math.hypot(this.companionPos.x - cPrev.x, this.companionPos.z - cPrev.z) / dt : 0;
+      this.companionMesh.userData.lastPos = this.companionPos.clone();
+      (this.companionMesh.userData.character as Character | undefined)?.update(dt, {
+        speed: Math.min(6.5, cSpeed * 0.52),
+        swimming: this.companionPos.y <= WATER_LEVEL + 0.15,
+      });
     }
 
     // NPC Schedules + Look Idle
@@ -2343,7 +2368,17 @@ export class WorldEngine {
       }
       const mesh = this.npcMeshes.get(npc.id);
       if (mesh) {
-        mesh.position.set(this.origin.toLocalX(npc.x), groundHeightAt(npc.x, npc.z), this.origin.toLocalZ(npc.z));
+        const nx = this.origin.toLocalX(npc.x);
+        const nz = this.origin.toLocalZ(npc.z);
+        const prevX = mesh.userData.lastX ?? npc.x;
+        const prevZ = mesh.userData.lastZ ?? npc.z;
+        const npcSpeed = dt > 0 ? Math.hypot(npc.x - prevX, npc.z - prevZ) / dt : 0;
+        if (npcSpeed > 0.05) mesh.rotation.y = Math.atan2(npc.x - prevX, npc.z - prevZ);
+        mesh.userData.lastX = npc.x;
+        mesh.userData.lastZ = npc.z;
+        mesh.position.set(nx, groundHeightAt(npc.x, npc.z), nz);
+        const ch = mesh.userData.character as Character | undefined;
+        if (ch && mesh.visible) ch.update(dt, { speed: Math.min(6.5, npcSpeed * 0.8) });
       }
     });
 
@@ -2530,33 +2565,25 @@ export class WorldEngine {
     // 2. Player Procedural Rig Animation (Walk / Swim / Crouch / Block / Attack)
     this.playerModel.group.position.set(plx, this.playerState.y, plz);
     this.playerSquashY = THREE.MathUtils.lerp(this.playerSquashY, 1.0, Math.min(1, dt * 12));
-    const crouchScale = this.isCrouching ? 0.78 : 1.0;
-    this.playerModel.bodyPivot.scale.set(1, this.playerSquashY * crouchScale, 1);
+    this.playerModel.bodyPivot.scale.set(1, this.playerSquashY, 1);
 
-    const moving = Boolean(
-      this.input.keys['KeyW'] ||
-        this.input.keys['KeyS'] ||
-        this.input.keys['KeyA'] ||
-        this.input.keys['KeyD']
-    ) && !this.atHelmShipId;
-
-    const swing = moving ? Math.sin(this.walkPhase) * 0.62 : Math.sin(elapsed * 2) * 0.04;
-    this.playerModel.leftLeg.rotation.x = this.isSwimming ? Math.sin(elapsed * 8) * 0.5 : swing;
-    this.playerModel.rightLeg.rotation.x = this.isSwimming ? -Math.sin(elapsed * 8) * 0.5 : -swing;
-
-    const blocking = this.input.isBlocking() && !this.atHelmShipId;
-    this.playerModel.leftArm.rotation.x = blocking ? -0.95 : this.isSwimming ? -Math.PI * 0.65 + Math.cos(elapsed * 5) * 0.45 : -swing * 0.5;
-    this.playerModel.shield.rotation.y = blocking ? 0.8 : 0.15;
-
-    if (this.attackSwingTimer > 0) {
-      this.playerModel.rightArm.rotation.x = -1.65 + Math.sin(this.attackSwingTimer * 18) * 1.1;
-    } else if (this.isSwimming) {
-      this.playerModel.rightArm.rotation.x = -Math.PI * 0.65 - Math.cos(elapsed * 5) * 0.45;
-    } else {
-      this.playerModel.rightArm.rotation.x = swing * 0.45;
-    }
-    this.playerModel.bodyPivot.rotation.x = this.isSwimming ? 0.55 : this.isCrouching ? 0.25 : 0;
-    this.playerModel.cape.rotation.x = 0.18 + (moving ? 0.35 : 0.05) + Math.sin(elapsed * 4.5) * 0.06;
+    // Real ground speed from position change (world units/s), mapped to the rig's gait scale.
+    // Game run speed 7.8 -> jog, sprint 12.6 -> full sprint.
+    const pdx = this.playerState.x - this.lastAnimPos.x;
+    const pdz = this.playerState.z - this.lastAnimPos.z;
+    this.lastAnimPos.set(this.playerState.x, this.playerState.y, this.playerState.z);
+    const groundSpeed = dt > 0 ? Math.min(30, Math.hypot(pdx, pdz) / dt) : 0;
+    const turnDelta = this.playerModel.group.rotation.y - this.lastAnimYaw;
+    this.lastAnimYaw = this.playerModel.group.rotation.y;
+    const atHelm = Boolean(this.atHelmShipId);
+    this.playerModel.character.update(dt, {
+      speed: atHelm ? 0 : groundSpeed * 0.52,
+      turnRate: dt > 0 ? turnDelta / dt : 0,
+      crouching: this.isCrouching && !this.isSwimming,
+      swimming: this.isSwimming,
+      blocking: this.input.isBlocking() && !atHelm,
+      airborne: !this.isGrounded && !this.isSwimming && !this.playerState.isClimbing,
+    });
 
     // 3. Sky, Weather, Ocean & Lights Update
     if (!this.activeDungeon) {

@@ -61,6 +61,8 @@ import {
   ITEMS,
 } from './data/worldData';
 import { WorldEngine } from './engine/WorldEngine';
+import CharacterCreatorModal from './components/modals/CharacterCreatorModal';
+import type { CharacterAppearance } from './engine/characters.js';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import {
   loadCloudSaves,
@@ -162,6 +164,7 @@ function createInitialInventory(): InventoryItem[] {
 export default function App() {
   const canvasHostRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<WorldEngine | null>(null);
+  const [creatorMode, setCreatorMode] = useState<null | 'new' | 'edit'>(null);
   const isOnline = useOnlineStatus();
 
   // Load initial save if present
@@ -626,9 +629,14 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
       if (gameMode === 'title') {
+        if (creatorMode) return;
         if (e.code === 'Enter' || e.code === 'Space') {
           e.preventDefault();
           soundEngine.initOnGesture();
+          if (!player.appearance) {
+            setCreatorMode('new');
+            return;
+          }
           soundEngine.triggerCue('quest', 'Chronicle Begun');
           setGameMode('playing');
         }
@@ -655,7 +663,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [gameMode, activeModal, activeNpcId, activeSealId, gestureOpen, voiceOpen]);
+  }, [gameMode, activeModal, activeNpcId, activeSealId, gestureOpen, voiceOpen, creatorMode, player.appearance]);
 
   const kingdomHealth = useMemo(
     () => Math.round(Object.values(biomes).reduce((sum, b) => sum + b.health, 0) / 4),
@@ -1048,13 +1056,17 @@ export default function App() {
               type="button"
               onClick={() => {
                 soundEngine.initOnGesture();
+                if (!player.appearance) {
+                  setCreatorMode('new');
+                  return;
+                }
                 soundEngine.triggerCue('quest', 'Chronicle Begun');
                 setGameMode('playing');
               }}
               className="px-8 py-3.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-display font-bold text-sm tracking-wide shadow-[0_0_30px_rgba(245,158,11,0.45)] flex items-center gap-2.5 transition-transform hover:scale-105"
             >
               <Play className="w-4 h-4 fill-slate-950" />
-              {initialSave ? 'Continue Chronicle [Enter]' : 'Enter Aethelgard [Enter]'}
+              {!player.appearance ? 'Create Your Hero [Enter]' : initialSave ? `Continue as ${player.appearance.name} [Enter]` : 'Enter Aethelgard [Enter]'}
             </button>
             <div className="text-xs text-slate-200/90 bg-slate-950/75 border border-white/15 px-4 py-1.5 rounded-lg">
               WASD Move · Shift Sprint · C Crouch/Dive · Drag/DblClick Look · 1–4 Elements · J Strike · B Block · V Dodge · F Anchor · E Helm/Interact
@@ -1907,6 +1919,13 @@ export default function App() {
               </button>
               <button
                 type="button"
+                onClick={() => setCreatorMode('edit')}
+                className="w-full py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold"
+              >
+                Edit Hero Appearance
+              </button>
+              <button
+                type="button"
                 onClick={() => setGameMode('title')}
                 className="w-full py-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-white/10 text-slate-300 text-xs font-medium"
               >
@@ -1915,6 +1934,26 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Character Creator (new hero, or edit from the pause menu) */}
+      {creatorMode && (
+        <CharacterCreatorModal
+          initial={player.appearance}
+          confirmLabel={creatorMode === 'new' ? 'Begin Chronicle' : 'Save Appearance'}
+          onCancel={() => setCreatorMode(null)}
+          onConfirm={(appearance: CharacterAppearance) => {
+            setPlayer((prev) => ({ ...prev, appearance }));
+            engineRef.current?.setPlayerAppearance(appearance);
+            const wasNew = creatorMode === 'new';
+            setCreatorMode(null);
+            if (wasNew) {
+              soundEngine.triggerCue('quest', 'Chronicle Begun');
+              pushCombatLog(`${appearance.name} steps into Aethelgard.`, 'world');
+              setGameMode('playing');
+            }
+          }}
+        />
       )}
 
       {/* Prophecy Fulfilled Victory Summary */}

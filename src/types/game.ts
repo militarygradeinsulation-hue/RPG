@@ -1,3 +1,4 @@
+import type { CharacterAppearance } from '../engine/characters.js';
 export type BiomeId = 'suncrest' | 'verdant' | 'ember' | 'aether';
 export type ElementType = 'fire' | 'lightning' | 'frost' | 'gale' | 'physical';
 export type WeatherType = 'Clear' | 'Rain' | 'Thunderstorm' | 'Ashfall' | 'Mist';
@@ -310,6 +311,8 @@ export interface AccessibilitySettings {
 }
 
 export interface PlayerState {
+  /** Hero look and name from the character creator. Missing on saves made before the creator existed. */
+  appearance?: CharacterAppearance;
   hp: number;
   maxHp: number;
   mana: number;
