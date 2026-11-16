@@ -1,4 +1,4 @@
-import type { QuestState } from '../types/game';
+import type { OutpostState, QuestState } from '../types/game';
 
 /**
  * The Frontier Saga extends the Four Seals campaign into the Sapphire Ocean.
@@ -131,4 +131,11 @@ export function unlockFrontierFinale(quests: QuestState[]): QuestState[] {
       ? { ...quest, status: 'active', step: Math.max(1, quest.step) }
       : quest
   );
+}
+
+/** Keep existing settlement levels while registering newly built regions. */
+export function mergeOutpostCatalog(saved: OutpostState[] | undefined, catalog: OutpostState[]): OutpostState[] {
+  if (!saved) return structuredClone(catalog);
+  const known = new Set(saved.map((outpost) => outpost.id));
+  return [...saved, ...catalog.filter((outpost) => !known.has(outpost.id)).map((outpost) => structuredClone(outpost))];
 }
