@@ -130,6 +130,8 @@ export interface QuestState {
   maxSteps: number;
   description: string;
   objectives: string[];
+  requiredItemId?: string;
+  requiredItemQty?: number;
   chosenPath?: string;
   choices?: QuestChoice[];
 }
