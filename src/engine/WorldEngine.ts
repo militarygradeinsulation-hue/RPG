@@ -1244,6 +1244,13 @@ export class WorldEngine {
     else if (t.kind === 'dungeon_exit') this.exitDungeon();
     else if (t.kind === 'chest') this.lootDungeonChest(t.id);
     else if (t.kind === 'salvage') this.lootSeaWreck(t.id);
+    else if (t.kind === 'villager') {
+      const response = this.livingSettlements.speakToResident(t.id);
+      if (response) {
+        soundEngine.triggerCue('quest', 'Village Conversation');
+        this.callbacks.onCombatLog(response, 'world');
+      }
+    }
     else if (t.kind === 'ship_helm') {
       this.atHelmShipId = t.id;
       this.activeShipId = t.id;
@@ -2486,9 +2493,16 @@ export class WorldEngine {
       waveSampler: this.waveSampler,
     });
 
-    this.playerState.x = res.x;
+    // Architectural collision is calculated in world space after terrain,
+    // foliage and ship physics, so front doors remain traversable.
+    const buildingResolved = this.activeDungeon
+      ? { x: res.x, z: res.z }
+      : this.livingSettlements.resolvePlayerMovement(
+          this.playerState.x, this.playerState.z, res.x, res.z
+        );
+    this.playerState.x = buildingResolved.x;
     this.playerState.y = res.y;
-    this.playerState.z = res.z;
+    this.playerState.z = buildingResolved.z;
     this.velocityY = res.vy;
     this.isGrounded = res.isGrounded;
     this.isSwimming = res.isSwimming;
@@ -3040,6 +3054,16 @@ export class WorldEngine {
           if (sc) prompts.push({ id: dp.id, kind: 'dungeon_enter', label: dp.name, actionHint: '[E] Enter Cave', color: '#c084fc', screenX: sc.sx, screenY: sc.sy, distance: d });
         }
       });
+      const nearbyVillager = this.livingSettlements.nearestResident(px, pz, 6.5);
+      if (nearbyVillager) {
+        const sc = project(nearbyVillager.x, groundHeightAt(nearbyVillager.x, nearbyVillager.z) + 2, nearbyVillager.z);
+        if (sc) prompts.push({
+          id: nearbyVillager.id, kind: 'villager',
+          label: nearbyVillager.name, actionHint: '[E] Speak',
+          color: '#e7c98b', screenX: sc.sx, screenY: sc.sy,
+          distance: Math.hypot(nearbyVillager.x - px, nearbyVillager.z - pz),
+        });
+      }
       this.npcs.forEach((n) => {
         const d = Math.hypot(n.x - px, n.z - pz);
         if (d < 8.5) {

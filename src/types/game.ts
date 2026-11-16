@@ -218,6 +218,7 @@ export interface NearbyPrompt {
   id: string;
   kind:
     | 'npc'
+    | 'villager'
     | 'resource'
     | 'outpost'
     | 'seal'

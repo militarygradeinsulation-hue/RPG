@@ -1,6 +1,8 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { PBRTextureSet } from '../render/MaterialLibrary';
 import { groundHeightAt } from './TerrainHeightfield';
+import { resolveVillageMovement } from './BuildingCollision';
 import { BuildingPlan, SettlementPlan, settlementCellAt, settlementsForCell, SETTLEMENT_CELL_SIZE } from './SettlementGenerator';
 
 /** A spatially bounded, deterministic world layer. Only nearby villages exist as 3D objects. */
@@ -11,6 +13,7 @@ interface ActiveSettlement {
   residents: THREE.InstancedMesh;
   residentHeads: THREE.InstancedMesh;
   originHeight: number;
+  residentLocations: { x: number; z: number }[];
 }
 export class LivingSettlementSystem {
   public readonly group = new THREE.Group();
@@ -28,6 +31,9 @@ export class LivingSettlementSystem {
   private lastSettlementBuild = 0;
   private readonly pendingSites = new Map<string, SettlementPlan>();
   private readonly residentDummy = new THREE.Object3D();
+  private readonly localBuildings: BuildingPlan[] = [];
+  private lastCollisionCellX = Number.NaN;
+  private lastCollisionCellZ = Number.NaN;
   private lastCellX = Number.NaN;
   private lastCellZ = Number.NaN;
   public readonly visibleSettlements: SettlementPlan[] = [];
@@ -48,6 +54,39 @@ export class LivingSettlementSystem {
     this.glassMat = new THREE.MeshStandardMaterial({
       color: 0xf0c981, emissive: 0xf4a739, emissiveIntensity: 0.55, roughness: 0.3,
     });
+  }
+
+  /** Batch static architectural pieces by material. This turns dozens of
+   * doorframe/wall/furniture draw calls into a few per building while keeping
+   * the removable roof separate from the interior. */
+  private batchStaticMeshes(group: THREE.Group): void {
+    const batches = new Map<THREE.Material, THREE.Mesh[]>();
+    for (const child of [...group.children]) {
+      if (!(child instanceof THREE.Mesh) || Array.isArray(child.material)) continue;
+      const list = batches.get(child.material) ?? [];
+      list.push(child);
+      batches.set(child.material, list);
+    }
+    for (const [material, meshes] of batches) {
+      if (meshes.length < 2) continue;
+      const baked = meshes.map(mesh => {
+        mesh.updateMatrix();
+        const geometry = mesh.geometry.clone();
+        geometry.applyMatrix4(mesh.matrix);
+        return geometry;
+      });
+      const merged = mergeGeometries(baked, false);
+      baked.forEach(geometry => geometry.dispose());
+      if (!merged) continue;
+      for (const mesh of meshes) {
+        group.remove(mesh);
+        mesh.geometry.dispose();
+      }
+      const combined = new THREE.Mesh(merged, material);
+      combined.castShadow = meshes.some(mesh => mesh.castShadow);
+      combined.receiveShadow = true;
+      group.add(combined);
+    }
   }
 
   /** Geometry is located in absolute world coordinates within each local group. */
@@ -93,6 +132,21 @@ export class LivingSettlementSystem {
         box(0.52, 0.8, 0.06, u, floor * 3.3 + 1.7, -d * 0.5 - 0.2, this.glassMat);
       }
     }
+    // Recessed entrance trim and facade framing mark actual walk-in openings.
+    for (const side of [-1, 1]) {
+      box(0.17, 2.85, 0.24, side * (doorW * 0.5 + 0.08), 1.39, d * 0.5 + 0.07, this.timber);
+    }
+    box(doorW + 0.3, 0.19, 0.26, 0, 2.72, d * 0.5 + 0.07, this.timber);
+    // Side-window rhythm differs by floor and facade proportions.
+    for (let floor = 0; floor < levels; floor++) {
+      for (const side of [-1, 1]) {
+        const windowZ = -d * (0.12 + 0.12 * (Math.floor(plan.seed * 5) % 2));
+        const window = box(0.06, 0.7, 0.6, side * (w * 0.5 + 0.21),
+          floor * 3.3 + 1.68, windowZ, this.glassMat);
+        window.castShadow = false;
+      }
+    }
+
     // Furnished, lit interior. No extra real-time lights or texture downloads.
     const furnitureCount = plan.kind === 'inn' ? 4 : plan.kind === 'keep' ? 5 : 2;
     for (let i = 0; i < furnitureCount; i++) {
@@ -117,12 +171,29 @@ export class LivingSettlementSystem {
         roof.add(crown);
       }
     } else {
-      const ridge = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.74, 2.4 + plan.seed, 4), roofMat);
-      ridge.rotation.y = Math.PI / 4 + (plan.seed > 0.5 ? Math.PI / 2 : 0);
-      ridge.position.y = height + 1;
-      ridge.castShadow = true;
-      roof.add(ridge);
-      box(0.8, 2.8, 0.8, w * 0.28, height + 0.8, -d * 0.2, wall, roof);
+      // Real pitched rafters instead of a repeated cone silhouette.
+      // Ridge follows the length of the building and slope changes with seed.
+      const pitch = 1.8 + plan.seed * 1.55;
+      const halfSpan = (w + 0.8) * 0.5;
+      const slopeLength = Math.hypot(halfSpan, pitch);
+      const slopeAngle = Math.atan2(pitch, halfSpan);
+      const roofLeft = new THREE.Mesh(new THREE.BoxGeometry(slopeLength, 0.24, d + 1.05), roofMat);
+      roofLeft.position.set(-halfSpan * 0.5, height + pitch * 0.5, 0);
+      roofLeft.rotation.z = slopeAngle;
+      roofLeft.castShadow = true;
+      roofLeft.receiveShadow = true;
+      roof.add(roofLeft);
+      const roofRight = roofLeft.clone();
+      roofRight.geometry = roofLeft.geometry.clone();
+      roofRight.position.x = halfSpan * 0.5;
+      roofRight.rotation.z = -slopeAngle;
+      roof.add(roofRight);
+      // Ridge cap, exposed oak gable, and offset chimney.
+      box(0.32, 0.32, d + 1.12, 0, height + pitch, 0, this.timber, roof);
+      box(0.8, 2.25, 0.8, w * 0.26, height + pitch * 0.62, -d * 0.2, wall, roof);
+      if (plan.kind === 'workshop') {
+        box(w * 0.55, 0.3, 2.6, 0, height - 0.8, d * 0.56, this.timber, roof);
+      }
     }
     group.add(roof);
 
@@ -136,6 +207,8 @@ export class LivingSettlementSystem {
       crystal.position.y = height + 3.3;
       group.add(crystal);
     }
+    this.batchStaticMeshes(roof);
+    this.batchStaticMeshes(group);
     return { group, roof };
   }
 
@@ -166,7 +239,7 @@ export class LivingSettlementSystem {
       }
     }
     this.group.add(root);
-    return { plan, group: root, roofs, residents: body, residentHeads: heads, originHeight: groundHeightAt(plan.x, plan.z) };
+    return { plan, group: root, roofs, residents: body, residentHeads: heads, originHeight: groundHeightAt(plan.x, plan.z), residentLocations: Array.from({ length: count }, () => ({ x: plan.x, z: plan.z })) };
   }
 
   public update(worldX: number, worldZ: number, originX: number, originZ: number): void {
@@ -191,6 +264,7 @@ export class LivingSettlementSystem {
       for (const [key, plan] of wanted) {
         if (!this.active.has(key)) this.pendingSites.set(key, plan);
       }
+      this.lastCollisionCellX = Number.NaN;
       this.visibleSettlements.length = 0;
       this.visibleSettlements.push(...Array.from(this.active.values(), site => site.plan));
     }
@@ -214,6 +288,7 @@ export class LivingSettlementSystem {
       }
       if (selected) {
         this.active.set(selectedKey, this.makeSettlement(selected, originX, originZ));
+        this.lastCollisionCellX = Number.NaN;
         this.pendingSites.delete(selectedKey);
         this.lastSettlementBuild = buildTime;
         this.visibleSettlements.push(selected);
@@ -232,6 +307,8 @@ export class LivingSettlementSystem {
           const wx = site.plan.x + Math.cos(phase) * radius;
           const wz = site.plan.z + Math.sin(phase) * radius;
           const y = groundHeightAt(wx, wz) - site.originHeight;
+          site.residentLocations[i].x = wx;
+          site.residentLocations[i].z = wz;
           this.residentDummy.position.set(wx - site.plan.x, y + 1.05, wz - site.plan.z);
           this.residentDummy.rotation.set(0, -phase, 0);
           this.residentDummy.scale.setScalar(0.82 + ((i + site.plan.style) % 4) * 0.07);
@@ -261,6 +338,76 @@ export class LivingSettlementSystem {
         roof.mesh.visible = dx * dx + dz * dz > roof.radius * roof.radius;
       }
     }
+  }
+
+  public nearestResident(worldX: number, worldZ: number, range = 5): {
+    id: string; name: string; x: number; z: number;
+  } | null {
+    let result: { id: string; name: string; x: number; z: number } | null = null;
+    let minSq = range * range;
+    for (const settlement of this.active.values()) {
+      if (Math.abs(settlement.plan.x - worldX) > 65 || Math.abs(settlement.plan.z - worldZ) > 65) continue;
+      for (let i = 0; i < settlement.residentLocations.length; i++) {
+        const resident = settlement.residentLocations[i];
+        const dx = resident.x - worldX;
+        const dz = resident.z - worldZ;
+        const d = dx * dx + dz * dz;
+        if (d >= minSq) continue;
+        minSq = d;
+        const role = ['Merchant', 'Ranger', 'Mason', 'Wayfarer', 'Herbalist', 'Scholar', 'Guard'][
+          (i + settlement.plan.style) % 7
+        ];
+        result = {
+          id: `${settlement.plan.id}:resident:${i}`,
+          name: `${settlement.plan.name} ${role}`,
+          x: resident.x, z: resident.z,
+        };
+      }
+    }
+    return result;
+  }
+
+  /** Deterministic local rumors that identify each resident and settlement. */
+  public speakToResident(id: string): string | null {
+    for (const settlement of this.active.values()) {
+      const prefix = `${settlement.plan.id}:resident:`;
+      if (!id.startsWith(prefix)) continue;
+      const index = Number(id.slice(prefix.length));
+      if (!Number.isInteger(index) || index < 0 || index >= settlement.residents.count) return null;
+      const role = ['merchant', 'ranger', 'mason', 'wayfarer', 'herbalist', 'scholar', 'guard'][
+        (index + settlement.plan.style) % 7
+      ];
+      const rumors: Record<string, string> = {
+        merchant: 'The roads change, but a fair bargain always brings travelers home.',
+        ranger: 'Watch the tree line after dusk. Creatures have moved farther from the old citadel.',
+        mason: 'Each house has its own foundations. A wall built against the land will stand for generations.',
+        wayfarer: 'There are settlements beyond the horizon. Follow the stars and keep moving.',
+        herbalist: 'The health of the land changes what grows here. Gather with care.',
+        scholar: 'The Four Seals are only part of the kingdom\'s oldest story.',
+        guard: 'The roads belong to those who protect them. Stay alert outside the village.',
+      };
+      return `[${settlement.plan.name} ${role}] ${rumors[role]}`;
+    }
+    return null;
+  }
+
+  /** Resolve nearby house and castle walls, allowing movement through doors. */
+  public resolvePlayerMovement(fromX: number, fromZ: number, toX: number, toZ: number): { x: number; z: number } {
+    const cx = Math.floor(toX / 16);
+    const cz = Math.floor(toZ / 16);
+    if (cx !== this.lastCollisionCellX || cz !== this.lastCollisionCellZ) {
+      this.lastCollisionCellX = cx;
+      this.lastCollisionCellZ = cz;
+      this.localBuildings.length = 0;
+      for (const settlement of this.active.values()) {
+        for (const building of settlement.plan.buildings) {
+          if (Math.abs(building.x - toX) < 36 && Math.abs(building.z - toZ) < 36) {
+            this.localBuildings.push(building);
+          }
+        }
+      }
+    }
+    return resolveVillageMovement(fromX, fromZ, toX, toZ, this.localBuildings);
   }
 
   public dispose(): void {
