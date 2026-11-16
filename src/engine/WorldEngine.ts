@@ -3141,6 +3141,21 @@ export class WorldEngine {
         }
       });
 
+      // Procedurally streamed towns appear on navigation just like hand-made
+      // settlements. Only active nearby world cells are included.
+      this.livingSettlements.visibleSettlements.forEach((site) => {
+        miniMapEntities.push({
+          id: site.id, kind: 'town', x: site.x, z: site.z,
+          color: '#f3c57b', label: site.name,
+        });
+        compassMarkers.push({
+          id: site.id, kind: 'town', label: site.name,
+          x: site.x, z: site.z,
+          distance: Math.round(Math.hypot(site.x - this.playerState.x, site.z - this.playerState.z)),
+          color: '#f3c57b',
+        });
+      });
+
       WORLD_POIS.forEach((poi) => {
         if (poi.kind === 'harbor') {
           miniMapEntities.push({ id: poi.id, kind: 'harbor', x: poi.x, z: poi.z, color: '#60a5fa', label: poi.name });
