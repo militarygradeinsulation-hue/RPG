@@ -36,3 +36,13 @@ test('rotated houses preserve collision and doorway alignment', () => {
 test('village collision leaves distant movement untouched', () => {
   assert.deepEqual(resolveVillageMovement(0, 0, 1, 1, [house]), { x: 1, z: 1 });
 });
+
+test('fast movement cannot cross a solid wall in one frame', () => {
+  const crossed = resolveBuildingCollision(50, 65, 50, 71, house);
+  assert.ok(crossed.z <= 65.5, `tunneled through rear wall: ${crossed.z}`);
+});
+
+test('fast movement through a doorway remains possible', () => {
+  const entered = resolveBuildingCollision(50, 76, 50, 70.5, house);
+  assert.ok(entered.z < 72, `blocked open doorway: ${entered.z}`);
+});
