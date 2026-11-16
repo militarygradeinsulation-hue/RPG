@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { PBRTextureSet } from '../render/MaterialLibrary';
 import { groundHeightAt } from './TerrainHeightfield';
 import { resolveVillageMovement } from './BuildingCollision';
@@ -53,6 +54,39 @@ export class LivingSettlementSystem {
     this.glassMat = new THREE.MeshStandardMaterial({
       color: 0xf0c981, emissive: 0xf4a739, emissiveIntensity: 0.55, roughness: 0.3,
     });
+  }
+
+  /** Batch static architectural pieces by material. This turns dozens of
+   * doorframe/wall/furniture draw calls into a few per building while keeping
+   * the removable roof separate from the interior. */
+  private batchStaticMeshes(group: THREE.Group): void {
+    const batches = new Map<THREE.Material, THREE.Mesh[]>();
+    for (const child of [...group.children]) {
+      if (!(child instanceof THREE.Mesh) || Array.isArray(child.material)) continue;
+      const list = batches.get(child.material) ?? [];
+      list.push(child);
+      batches.set(child.material, list);
+    }
+    for (const [material, meshes] of batches) {
+      if (meshes.length < 2) continue;
+      const baked = meshes.map(mesh => {
+        mesh.updateMatrix();
+        const geometry = mesh.geometry.clone();
+        geometry.applyMatrix4(mesh.matrix);
+        return geometry;
+      });
+      const merged = mergeGeometries(baked, false);
+      baked.forEach(geometry => geometry.dispose());
+      if (!merged) continue;
+      for (const mesh of meshes) {
+        group.remove(mesh);
+        mesh.geometry.dispose();
+      }
+      const combined = new THREE.Mesh(merged, material);
+      combined.castShadow = meshes.some(mesh => mesh.castShadow);
+      combined.receiveShadow = true;
+      group.add(combined);
+    }
   }
 
   /** Geometry is located in absolute world coordinates within each local group. */
@@ -141,6 +175,8 @@ export class LivingSettlementSystem {
       crystal.position.y = height + 3.3;
       group.add(crystal);
     }
+    this.batchStaticMeshes(roof);
+    this.batchStaticMeshes(group);
     return { group, roof };
   }
 
