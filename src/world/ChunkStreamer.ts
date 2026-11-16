@@ -107,8 +107,6 @@ export class ChunkStreamer {
     this.lastCx = cx;
     this.lastCz = cz;
     this.generation++;
-
-    this.generation++;
     const healths = this.extractHealths(biomes);
     const isWinter = season === 'Winter';
 
@@ -119,8 +117,7 @@ export class ChunkStreamer {
         const wx = tcx * CHUNK_SIZE;
         const wz = tcz * CHUNK_SIZE;
         const geo = new THREE.BufferGeometry();
-        // Immediate 3x3 center synchronous so start screen & spawn never have blank holes;
-        // outer ring streams asynchronously in Web Worker!
+        // Seed only the spawn chunk synchronously; stream neighbors on worker.
         const chunk: StreamedChunk = {
           cx: tcx,
           cz: tcz,
@@ -193,8 +190,17 @@ export class ChunkStreamer {
       chunk.mesh.position.set(wx - originX, 0, wz - originZ);
       // Never show an old chunk's geometry at new world coordinates.
       chunk.mesh.visible = false;
-      this.dispatchChunkJob(chunk, wx, wz, healths, isWinter, season);
     });
+
+    // The worker discards its queued requests when a new generation begins.
+    // Resubmit ALL still-unresolved visible chunks, not only moved meshes.
+    // Otherwise a chunk whose earlier job was discarded can remain blank.
+    for (const chunk of this.chunks) {
+      if (chunk.mesh.visible) continue;
+      const wx = chunk.cx * CHUNK_SIZE;
+      const wz = chunk.cz * CHUNK_SIZE;
+      this.dispatchChunkJob(chunk, wx, wz, healths, isWinter, season);
+    }
 
     return true;
   }
