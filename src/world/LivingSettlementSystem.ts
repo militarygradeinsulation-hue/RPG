@@ -12,6 +12,7 @@ interface ActiveSettlement {
   residents: THREE.InstancedMesh;
   residentHeads: THREE.InstancedMesh;
   originHeight: number;
+  residentLocations: { x: number; z: number }[];
 }
 export class LivingSettlementSystem {
   public readonly group = new THREE.Group();
@@ -170,7 +171,7 @@ export class LivingSettlementSystem {
       }
     }
     this.group.add(root);
-    return { plan, group: root, roofs, residents: body, residentHeads: heads, originHeight: groundHeightAt(plan.x, plan.z) };
+    return { plan, group: root, roofs, residents: body, residentHeads: heads, originHeight: groundHeightAt(plan.x, plan.z), residentLocations: Array.from({ length: count }, () => ({ x: plan.x, z: plan.z })) };
   }
 
   public update(worldX: number, worldZ: number, originX: number, originZ: number): void {
@@ -238,6 +239,8 @@ export class LivingSettlementSystem {
           const wx = site.plan.x + Math.cos(phase) * radius;
           const wz = site.plan.z + Math.sin(phase) * radius;
           const y = groundHeightAt(wx, wz) - site.originHeight;
+          site.residentLocations[i].x = wx;
+          site.residentLocations[i].z = wz;
           this.residentDummy.position.set(wx - site.plan.x, y + 1.05, wz - site.plan.z);
           this.residentDummy.rotation.set(0, -phase, 0);
           this.residentDummy.scale.setScalar(0.82 + ((i + site.plan.style) % 4) * 0.07);
@@ -267,6 +270,57 @@ export class LivingSettlementSystem {
         roof.mesh.visible = dx * dx + dz * dz > roof.radius * roof.radius;
       }
     }
+  }
+
+  public nearestResident(worldX: number, worldZ: number, range = 5): {
+    id: string; name: string; x: number; z: number;
+  } | null {
+    let result: { id: string; name: string; x: number; z: number } | null = null;
+    let minSq = range * range;
+    for (const settlement of this.active.values()) {
+      if (Math.abs(settlement.plan.x - worldX) > 65 || Math.abs(settlement.plan.z - worldZ) > 65) continue;
+      for (let i = 0; i < settlement.residentLocations.length; i++) {
+        const resident = settlement.residentLocations[i];
+        const dx = resident.x - worldX;
+        const dz = resident.z - worldZ;
+        const d = dx * dx + dz * dz;
+        if (d >= minSq) continue;
+        minSq = d;
+        const role = ['Merchant', 'Ranger', 'Mason', 'Wayfarer', 'Herbalist', 'Scholar', 'Guard'][
+          (i + settlement.plan.style) % 7
+        ];
+        result = {
+          id: `${settlement.plan.id}:resident:${i}`,
+          name: `${settlement.plan.name} ${role}`,
+          x: resident.x, z: resident.z,
+        };
+      }
+    }
+    return result;
+  }
+
+  /** Deterministic local rumors that identify each resident and settlement. */
+  public speakToResident(id: string): string | null {
+    for (const settlement of this.active.values()) {
+      const prefix = `${settlement.plan.id}:resident:`;
+      if (!id.startsWith(prefix)) continue;
+      const index = Number(id.slice(prefix.length));
+      if (!Number.isInteger(index) || index < 0 || index >= settlement.residents.count) return null;
+      const role = ['merchant', 'ranger', 'mason', 'wayfarer', 'herbalist', 'scholar', 'guard'][
+        (index + settlement.plan.style) % 7
+      ];
+      const rumors: Record<string, string> = {
+        merchant: 'The roads change, but a fair bargain always brings travelers home.',
+        ranger: 'Watch the tree line after dusk. Creatures have moved farther from the old citadel.',
+        mason: 'Each house has its own foundations. A wall built against the land will stand for generations.',
+        wayfarer: 'There are settlements beyond the horizon. Follow the stars and keep moving.',
+        herbalist: 'The health of the land changes what grows here. Gather with care.',
+        scholar: 'The Four Seals are only part of the kingdom\'s oldest story.',
+        guard: 'The roads belong to those who protect them. Stay alert outside the village.',
+      };
+      return `[${settlement.plan.name} ${role}] ${rumors[role]}`;
+    }
+    return null;
   }
 
   /** Resolve nearby house and castle walls, allowing movement through doors. */
