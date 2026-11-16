@@ -372,6 +372,13 @@ export class WorldEngine {
   private slowFrameStreak = 0;
   private readonly resizeObserver: ResizeObserver | null = null;
   private readonly onResizeHandler: () => void;
+  private readonly onVisibilityChange = () => {
+    // Reset elapsed time after a tab switches back to the foreground.
+    this.loop.reset();
+    this.prevSimPos.set(Number.NaN, 0, 0);
+    if (document.hidden) this.input.setEnabled(false);
+    else this.input.setEnabled(this.gameMode === 'playing');
+  };
 
   constructor(
     container: HTMLElement,
@@ -489,6 +496,7 @@ export class WorldEngine {
       this.csm?.updateFrustums();
     };
     window.addEventListener('resize', this.onResizeHandler);
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(this.onResizeHandler);
       this.resizeObserver.observe(this.container);
@@ -2149,18 +2157,22 @@ export class WorldEngine {
 
     // 3. Origin Floating Check & Chunk Streaming (when on Overworld)
     if (!this.activeDungeon) {
-      this.origin.update(this.playerState.x, this.playerState.z, [
-        this.chunkStreamer.group,
-        this.vegetation.group,
-        this.seaLife.group,
-        ...Array.from(this.npcMeshes.values()),
-        ...Array.from(this.outpostMeshes.values()),
-        ...Array.from(this.sealModels.values()).map((s) => s.group),
-        ...Array.from(this.caravanMeshes.values()),
-        ...Array.from(this.wreckMeshes.values()),
-      ]);
-      // Re-sync world-pinned overworld children smoothly after any origin shift
-      this.syncWorldPinnedTransforms(elapsed);
+      // Origin shifts are rare. Avoid allocating maps and rewriting world
+      // transforms sixty times per second during ordinary exploration.
+      if (Math.abs(this.playerState.x - this.origin.originX) >= 1024 ||
+          Math.abs(this.playerState.z - this.origin.originZ) >= 1024) {
+        const shifted = this.origin.update(this.playerState.x, this.playerState.z, [
+          this.chunkStreamer.group,
+          this.vegetation.group,
+          this.seaLife.group,
+          ...this.npcMeshes.values(),
+          ...this.outpostMeshes.values(),
+          ...Array.from(this.sealModels.values(), (s) => s.group),
+          ...this.caravanMeshes.values(),
+          ...this.wreckMeshes.values(),
+        ]);
+        if (shifted) this.syncWorldPinnedTransforms(elapsed);
+      }
 
       this.chunkStreamer.update(
         this.playerState.x,
@@ -3198,6 +3210,7 @@ export class WorldEngine {
     this.disposed = true;
     cancelAnimationFrame(this.frameId);
     window.removeEventListener('resize', this.onResizeHandler);
+    document.removeEventListener('visibilitychange', this.onVisibilityChange);
     this.resizeObserver?.disconnect();
     this.input.dispose();
     this.chunkStreamer.dispose();
