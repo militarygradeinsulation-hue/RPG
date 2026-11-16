@@ -1,0 +1,44 @@
+import { strict as assert } from 'node:assert';
+import { test } from 'node:test';
+import { FRONTIER_QUESTS, FRONTIER_DISCOVERY_QUESTS, FRONTIER_REQUIRED_QUESTS, mergeQuestCatalog, advanceFrontierDiscovery, unlockFrontierFinale } from './frontierSaga';
+
+test('all four outer islands have one valid discovery storyline', () => {
+  const regional = FRONTIER_QUESTS.filter((quest) => quest.id !== 'quest_frontier_crown');
+  assert.equal(regional.length, 4);
+  assert.equal(Object.keys(FRONTIER_DISCOVERY_QUESTS).length, 4);
+  for (const id of Object.values(FRONTIER_DISCOVERY_QUESTS)) {
+    const quest = regional.find((item) => item.id === id);
+    assert.ok(quest, `Missing regional quest: ${id}`);
+    assert.equal(quest.status, 'available');
+    assert.ok(quest.choices && quest.choices.length === 2);
+    assert.ok(quest.choices.every((choice) => choice.rewardXp > 0));
+  }
+});
+
+test('existing saved quests are preserved and new chapters append exactly once', () => {
+  const completed = { ...FRONTIER_QUESTS[0], status: 'completed' as const, step: 2 };
+  const first = mergeQuestCatalog([completed], FRONTIER_QUESTS);
+  assert.equal(first.length, FRONTIER_QUESTS.length);
+  assert.equal(first[0].status, 'completed');
+  assert.equal(mergeQuestCatalog(first, FRONTIER_QUESTS).length, FRONTIER_QUESTS.length);
+});
+
+test('visiting an island unlocks its decision but does not award a reward', () => {
+  const initial = mergeQuestCatalog(undefined, FRONTIER_QUESTS);
+  const next = advanceFrontierDiscovery(initial, 'poi_isle_moonveil');
+  assert.equal(next.find(q => q.id === 'quest_moonveil')?.step, 1);
+  assert.equal(next.find(q => q.id === 'quest_moonveil')?.status, 'active');
+  assert.equal(next.find(q => q.id === 'quest_ashen_crown')?.status, 'available');
+  assert.equal(advanceFrontierDiscovery(next, 'poi_isle_moonveil')[0].step, 1);
+});
+
+test('the final chapter unlocks only after all four island story choices', () => {
+  const quests = mergeQuestCatalog(undefined, FRONTIER_QUESTS);
+  assert.equal(unlockFrontierFinale(quests).find(q => q.id === 'quest_frontier_crown')?.status, 'available');
+  const ready = quests.map((quest) => FRONTIER_REQUIRED_QUESTS.includes(quest.id as typeof FRONTIER_REQUIRED_QUESTS[number])
+    ? { ...quest, status: 'completed' as const, step: quest.maxSteps }
+    : quest);
+  const updated = unlockFrontierFinale(ready);
+  assert.equal(updated.find(q => q.id === 'quest_frontier_crown')?.status, 'active');
+  assert.equal(updated.find(q => q.id === 'quest_frontier_crown')?.step, 1);
+});
