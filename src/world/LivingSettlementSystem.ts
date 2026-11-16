@@ -24,6 +24,8 @@ export class LivingSettlementSystem {
   private readonly residentBodyMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.96 });
   private readonly residentHeadMat = new THREE.MeshStandardMaterial({ color: 0xd8b8a0, roughness: 0.94 });
   private lastResidentStep = 0;
+  private lastSettlementBuild = 0;
+  private readonly pendingSites = new Map<string, SettlementPlan>();
   private readonly residentDummy = new THREE.Object3D();
   private lastCellX = Number.NaN;
   private lastCellZ = Number.NaN;
@@ -178,11 +180,37 @@ export class LivingSettlementSystem {
           this.active.delete(key);
         }
       }
+      this.pendingSites.clear();
       for (const [key, plan] of wanted) {
-        if (!this.active.has(key)) this.active.set(key, this.makeSettlement(plan, originX, originZ));
+        if (!this.active.has(key)) this.pendingSites.set(key, plan);
       }
       this.visibleSettlements.length = 0;
       this.visibleSettlements.push(...Array.from(this.active.values(), site => site.plan));
+    }
+
+    // Generate only one settlement per ~90 ms, nearest first. Prevent a
+    // sudden multi-village geometry spike when crossing a cell boundary.
+    const buildTime = performance.now();
+    if (this.pendingSites.size && buildTime - this.lastSettlementBuild >= 90) {
+      let selected: SettlementPlan | null = null;
+      let selectedKey = '';
+      let closest = Infinity;
+      for (const [key, plan] of this.pendingSites) {
+        const dx = plan.x - worldX;
+        const dz = plan.z - worldZ;
+        const d = dx * dx + dz * dz;
+        if (d < closest) {
+          selected = plan;
+          selectedKey = key;
+          closest = d;
+        }
+      }
+      if (selected) {
+        this.active.set(selectedKey, this.makeSettlement(selected, originX, originZ));
+        this.pendingSites.delete(selectedKey);
+        this.lastSettlementBuild = buildTime;
+        this.visibleSettlements.push(selected);
+      }
     }
 
     // Residents wander near their settlement square. Update at 8 Hz to
@@ -236,6 +264,7 @@ export class LivingSettlementSystem {
       });
     }
     this.active.clear();
+    this.pendingSites.clear();
     this.residentBodyGeo.dispose();
     this.residentHeadGeo.dispose();
     this.residentBodyMat.dispose();
