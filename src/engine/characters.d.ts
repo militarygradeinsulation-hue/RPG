@@ -22,7 +22,8 @@ export interface CharacterUpdateState {
   blocking?: boolean;
   airborne?: boolean;
 }
-export type CharacterAction = 'strike' | 'cast' | 'block' | 'wave';
+export type CharacterAction = 'strike' | 'cast' | 'block' | 'wave' | 'shoot' | 'thrust' | 'castPush' | 'castPoint' | 'castCone' | 'castSweep';
+export type AttackStyle = 'sword' | 'bow' | 'staff' | 'dagger' | 'axe' | 'hammer' | 'spear' | 'unarmed';
 export interface Character {
   root: THREE.Group;
   bones: Record<string, THREE.Object3D>;
@@ -30,6 +31,8 @@ export interface Character {
   update(dt: number, state?: CharacterUpdateState): void;
   play(name: CharacterAction): number;
   isBusy(): boolean;
+  attackStyle: AttackStyle;
+  getCastPoint(target?: THREE.Vector3, side?: 'L' | 'R'): THREE.Vector3;
   dispose(): void;
   capsule: { height: number; radius: number };
 }

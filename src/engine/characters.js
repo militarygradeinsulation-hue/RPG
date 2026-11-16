@@ -21,6 +21,7 @@
  * unless you also scale your collider capsule (default: 1.8 m tall, radius 0.3 m).
  */
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 /* ------------------------------------------------------------------ */
 /* Procedural textures                                                 */
@@ -434,6 +435,14 @@ export function createCharacter(presetOrOptions = 'hero', overrides = {}) {
 
   root.traverse((n) => { if (n.isMesh) { n.castShadow = true; n.receiveShadow = true; } });
 
+  /* ---- performance: merge static pieces per animated joint ---- */
+  if (cloak) cloak.mesh.userData.keep = true;
+  if (props.weapon?.userData.crystal) props.weapon.userData.crystal.userData.keep = true;
+  const animated = new Set([rig, hips, spine, chest, neck, head, ...(head.userData.eyes ?? [])]);
+  if (head.userData.tail) animated.add(head.userData.tail);
+  for (const sd of Object.values(sides)) for (const k of ['shoulder', 'upperArm', 'foreArm', 'hand', 'thigh', 'shin', 'foot']) animated.add(sd[k]);
+  if (o.optimize !== false) optimizeRig(root, animated);
+
   /* ---- animation ---- */
   const anim = createAnimator({ hips, spine, chest, neck, head, sides, cloak, props, o });
 
@@ -446,9 +455,75 @@ export function createCharacter(presetOrOptions = 'hero', overrides = {}) {
     /** 'strike' | 'cast' | 'block' | 'wave'. Returns duration in seconds. */
     play: (name) => anim.play(name),
     isBusy: () => anim.busy(),
+    /** What the J key does for this character: 'sword' | 'bow' | 'staff' | 'dagger' | 'axe' | 'hammer' | 'spear' | 'unarmed' */
+    attackStyle: props.bow ? 'bow' : (o.weapon || 'unarmed'),
+    /** World-space (scene) position spells and shots come from: staff crystal, else the casting hand. */
+    getCastPoint(target = new THREE.Vector3(), side = 'R') {
+      const crystal = props.weapon?.userData?.crystal;
+      if (crystal && side === 'R') return crystal.getWorldPosition(target);
+      return sides[side].hand.getWorldPosition(target);
+    },
     dispose: () => root.traverse((n) => { if (n.isMesh) { n.geometry.dispose(); } }),
     capsule: { height: H, radius: 0.3 * B * S },
   };
+}
+
+function materialKey(m) {
+  const c = (x) => (x && x.isColor ? x.getHexString() : '');
+  return [m.type, c(m.color), c(m.emissive), m.emissiveIntensity, m.roughness, m.metalness, m.map?.uuid, m.bumpMap?.uuid, m.roughnessMap?.uuid,
+    m.transparent, m.opacity, m.side, m.sheen, m.clearcoat, m.transmission, m.alphaTest].join('|');
+}
+
+/**
+ * Bakes every static mesh under each animated joint into one mesh per material.
+ * Animation still works because only the joints move; the pieces under a joint are rigid.
+ */
+function optimizeRig(root, animated) {
+  root.updateMatrixWorld(true);
+  const matCache = new Map();
+  const inv = new THREE.Matrix4();
+  const rel = new THREE.Matrix4();
+  for (const joint of animated) {
+    const buckets = new Map();
+    const stack = [...joint.children];
+    while (stack.length) {
+      const n = stack.pop();
+      if (animated.has(n)) continue;
+      if (n.isMesh && !n.userData.keep && !n.isSkinnedMesh) {
+        if (!n.visible) { n.parent.remove(n); continue; }
+        const key = materialKey(n.material);
+        if (!matCache.has(key)) matCache.set(key, n.material);
+        if (!buckets.has(key)) buckets.set(key, []);
+        buckets.get(key).push(n);
+      }
+      stack.push(...n.children);
+    }
+    inv.copy(joint.matrixWorld).invert();
+    for (const [key, meshes] of buckets) {
+      if (meshes.length < 2 && meshes[0].parent === joint) continue;
+      const geos = meshes.map((m) => {
+        rel.multiplyMatrices(inv, m.matrixWorld);
+        let g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
+        for (const name of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(name)) g.deleteAttribute(name);
+        if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
+        if (!g.attributes.normal) g.computeVertexNormals();
+        g.clearGroups();
+        g.applyMatrix4(rel);
+        return g;
+      });
+      const merged = mergeGeometries(geos, false);
+      geos.forEach((g) => g.dispose());
+      if (!merged) continue;
+      const mm = new THREE.Mesh(merged, matCache.get(key));
+      mm.castShadow = true; mm.receiveShadow = true;
+      joint.add(mm);
+      for (const m of meshes) { m.parent.remove(m); m.geometry.dispose(); }
+    }
+  }
+  // drop now-empty static groups
+  const empties = [];
+  root.traverse((n) => { if (!animated.has(n) && !n.isMesh && !n.isLight && !n.isLine && n.children.length === 0 && n !== root) empties.push(n); });
+  empties.forEach((n) => n.parent && n.parent.remove(n));
 }
 
 function flattenSides(sides) {
@@ -912,7 +987,7 @@ function buildCloak(chest, opts, B) {
 /* Animation                                                           */
 /* ------------------------------------------------------------------ */
 
-const ACTIONS = { strike: 0.55, cast: 0.8, block: 0.6, wave: 1.4 };
+const ACTIONS = { strike: 0.55, cast: 0.8, block: 0.6, wave: 1.4, shoot: 0.6, thrust: 0.32, castPush: 0.5, castPoint: 0.45, castCone: 0.6, castSweep: 0.6 };
 
 function createAnimator(r) {
   const { hips, spine, chest, neck, head, sides, cloak, props, o } = r;
@@ -927,7 +1002,7 @@ function createAnimator(r) {
   const env = (x, a, b) => (x < a ? ease(x / a) : x > 1 - b ? ease((1 - x) / b) : 1);
 
   function update(dt, state) {
-    dt = Math.min(dt, 0.05);
+    dt = Math.min(dt, 0.15);
     t += dt;
     const target = Math.max(0, state.speed ?? 0);
     sp += (target - sp) * Math.min(1, dt * 6);                 // smooth speed
@@ -1084,6 +1159,60 @@ function createAnimator(r) {
       L.upperArm.rotation.z = THREE.MathUtils.lerp(L.upperArm.rotation.z, -0.3, w);
       L.foreArm.rotation.x = THREE.MathUtils.lerp(L.foreArm.rotation.x, -1.5, w);
       spine.rotation.x += w * 0.1;
+    } else if (name === 'shoot') {
+      // draw (0-0.55), release, follow-through
+      const w = env(k, 0.18, 0.25);
+      const rel = k > 0.55 ? ease(Math.min(1, (k - 0.55) / 0.12)) : 0;
+      spine.rotation.y += w * -0.55;
+      L.upperArm.rotation.x = THREE.MathUtils.lerp(L.upperArm.rotation.x, -1.5, w);
+      L.upperArm.rotation.z = THREE.MathUtils.lerp(L.upperArm.rotation.z, -0.15, w);
+      L.foreArm.rotation.x = THREE.MathUtils.lerp(L.foreArm.rotation.x, -0.05, w);
+      R.upperArm.rotation.x = THREE.MathUtils.lerp(R.upperArm.rotation.x, -1.45 + rel * 0.35, w);
+      R.upperArm.rotation.z = THREE.MathUtils.lerp(R.upperArm.rotation.z, 0.55 - rel * 0.5, w);
+      R.foreArm.rotation.x = THREE.MathUtils.lerp(R.foreArm.rotation.x, -2.2 + rel * 1.4, w);
+    } else if (name === 'thrust') {
+      const up = k < 0.3 ? ease(k / 0.3) : 1;
+      const go = k < 0.3 ? 0 : k < 0.6 ? ease((k - 0.3) / 0.3) : 1;
+      const w = 1 - (k > 0.65 ? ease((k - 0.65) / 0.35) : 0);
+      R.upperArm.rotation.x = THREE.MathUtils.lerp(R.upperArm.rotation.x, -0.4 * up - 1.1 * go, w);
+      R.foreArm.rotation.x = THREE.MathUtils.lerp(R.foreArm.rotation.x, -1.7 * up + 1.6 * go, w);
+      spine.rotation.x += w * 0.2 * go;
+      spine.rotation.y += w * (0.3 * up - 0.5 * go);
+    } else if (name === 'castPush') {
+      const up = k < 0.35 ? ease(k / 0.35) : 1;
+      const go = k < 0.35 ? 0 : k < 0.55 ? ease((k - 0.35) / 0.2) : 1;
+      const w = 1 - (k > 0.65 ? ease((k - 0.65) / 0.35) : 0);
+      R.upperArm.rotation.x = THREE.MathUtils.lerp(R.upperArm.rotation.x, -0.5 * up - 1.05 * go, w);
+      R.upperArm.rotation.z = THREE.MathUtils.lerp(R.upperArm.rotation.z, -0.25 * up + 0.2 * go, w);
+      R.foreArm.rotation.x = THREE.MathUtils.lerp(R.foreArm.rotation.x, -1.6 * up + 1.5 * go, w);
+      spine.rotation.y += w * (0.45 * up - 0.7 * go);
+    } else if (name === 'castPoint') {
+      const up = k < 0.4 ? ease(k / 0.4) : 1;
+      const go = k < 0.4 ? 0 : k < 0.55 ? ease((k - 0.4) / 0.15) : 1;
+      const w = 1 - (k > 0.7 ? ease((k - 0.7) / 0.3) : 0);
+      R.upperArm.rotation.x = THREE.MathUtils.lerp(R.upperArm.rotation.x, -2.9 * up + 1.35 * go, w);
+      R.upperArm.rotation.z = THREE.MathUtils.lerp(R.upperArm.rotation.z, -0.2, w);
+      R.foreArm.rotation.x = THREE.MathUtils.lerp(R.foreArm.rotation.x, -0.15, w);
+      L.upperArm.rotation.z = THREE.MathUtils.lerp(L.upperArm.rotation.z, 0.5, w * up);
+      neck.rotation.x -= w * 0.15 * up;
+    } else if (name === 'castCone') {
+      const w = env(k, 0.25, 0.3);
+      for (const [arm, dir] of [[L, 1], [R, -1]]) {
+        arm.upperArm.rotation.x = THREE.MathUtils.lerp(arm.upperArm.rotation.x, -1.5, w);
+        arm.upperArm.rotation.z = THREE.MathUtils.lerp(arm.upperArm.rotation.z, dir * -0.32, w);
+        arm.foreArm.rotation.x = THREE.MathUtils.lerp(arm.foreArm.rotation.x, -0.1, w);
+        arm.hand.rotation.x = -w * 1.1;
+      }
+      spine.rotation.x += w * 0.12;
+    } else if (name === 'castSweep') {
+      const w = env(k, 0.15, 0.3);
+      const up = ease(Math.min(1, k / 0.55));
+      for (const [arm, dir] of [[L, 1], [R, -1]]) {
+        arm.upperArm.rotation.x = THREE.MathUtils.lerp(arm.upperArm.rotation.x, -0.2 - up * 2.7, w);
+        arm.upperArm.rotation.z = THREE.MathUtils.lerp(arm.upperArm.rotation.z, dir * (0.9 - up * 0.6), w);
+        arm.foreArm.rotation.x = THREE.MathUtils.lerp(arm.foreArm.rotation.x, -0.2, w);
+      }
+      spine.rotation.x -= w * 0.15 * up;
     } else if (name === 'wave') {
       const w = env(k, 0.2, 0.2);
       R.upperArm.rotation.x = THREE.MathUtils.lerp(R.upperArm.rotation.x, -0.4, w);

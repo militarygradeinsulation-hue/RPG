@@ -13,6 +13,9 @@ import {
   Snowflake,
   Sparkles,
   Swords,
+  Sword,
+  Crosshair,
+  WandSparkles,
   Trophy,
   Wind,
   Zap,
@@ -1561,8 +1564,18 @@ export default function App() {
             onClick={() => engineRef.current?.performMeleeAttack()}
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold whitespace-nowrap shrink-0"
           >
-            <Swords className="w-3.5 h-3.5 text-slate-200" />
-            Strike [J]
+            {(() => {
+              const hc = player.appearance?.heroClass ?? 'warden';
+              const Icon = hc === 'ranger' ? Crosshair : hc === 'mage' ? WandSparkles : hc === 'rogue' ? Sword : Swords;
+              const label = hc === 'ranger' ? 'Shoot' : hc === 'mage' ? 'Arcane Bolt' : hc === 'rogue' ? 'Stab' : 'Slash';
+              return (
+                <>
+                  <Icon className="w-3.5 h-3.5 text-slate-200" />
+                  {label} [J]
+                  {player.cooldowns.melee > 0.05 && <span className="font-mono-tabular text-slate-400">{player.cooldowns.melee.toFixed(1)}s</span>}
+                </>
+              );
+            })()}
           </button>
           <button
             type="button"
@@ -1570,7 +1583,7 @@ export default function App() {
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold whitespace-nowrap shrink-0"
           >
             <Flame className="w-3.5 h-3.5 text-orange-400" />
-            Fire [1]
+            Fireball [1]
             {player.cooldowns.fire > 0 && <span className="font-mono-tabular text-slate-400">{player.cooldowns.fire.toFixed(1)}s</span>}
           </button>
           <button
@@ -1579,7 +1592,7 @@ export default function App() {
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold whitespace-nowrap shrink-0"
           >
             <Zap className="w-3.5 h-3.5 text-sky-400" />
-            Storm [2]
+            Lightning [2]
             {player.cooldowns.lightning > 0 && <span className="font-mono-tabular text-slate-400">{player.cooldowns.lightning.toFixed(1)}s</span>}
           </button>
           <button
@@ -1588,7 +1601,7 @@ export default function App() {
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold whitespace-nowrap shrink-0"
           >
             <Snowflake className="w-3.5 h-3.5 text-cyan-300" />
-            Frost [3]
+            Frost Cone [3]
             {player.cooldowns.frost > 0 && <span className="font-mono-tabular text-slate-400">{player.cooldowns.frost.toFixed(1)}s</span>}
           </button>
           <button
@@ -1597,7 +1610,7 @@ export default function App() {
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold whitespace-nowrap shrink-0"
           >
             <Wind className="w-3.5 h-3.5 text-emerald-400" />
-            Gale [4]
+            Gale Burst [4]
             {player.cooldowns.gale > 0 && <span className="font-mono-tabular text-slate-400">{player.cooldowns.gale.toFixed(1)}s</span>}
           </button>
           <button

@@ -22,6 +22,7 @@ import {
   SnowShaderUniforms,
 } from '../render/MaterialLibrary';
 import { ParticlePool } from '../render/ParticlePool';
+import { CombatFX, FxTarget } from './CombatFX';
 import { RenderPipeline } from '../render/RenderPipeline';
 import { SkyAndWeather } from '../render/SkyAndWeather';
 import {
@@ -251,6 +252,7 @@ export class WorldEngine {
   private hemiLight!: THREE.HemisphereLight;
   private skyWeather!: SkyAndWeather;
   private particlePool!: ParticlePool;
+  private combatFx!: CombatFX;
 
   // World Subsystems
   private readonly overworldGroup = new THREE.Group();
@@ -349,6 +351,10 @@ export class WorldEngine {
   private walkPhase = 0;
   private readonly lastAnimPos = new THREE.Vector3();
   private lastAnimYaw = 0;
+  /** Player position at the start of the latest fixed step, for render interpolation. */
+  private readonly prevSimPos = new THREE.Vector3(Number.NaN, 0, 0);
+  private renderAlpha = 1;
+  private readonly renderPos = new THREE.Vector3();
   private playerSquashY = 1;
   private lastFootstepPhase = 0;
 
@@ -357,6 +363,7 @@ export class WorldEngine {
   private cameraDist = 11.5;
   private readonly smoothCamTarget = new THREE.Vector3(0, 2.5, 6);
   private readonly smoothCamPos = new THREE.Vector3(0, 8, 18);
+  private readonly tmpCamVec = new THREE.Vector3();
 
   // Throttling
   private nearestTarget: { kind: NearbyPrompt['kind']; id: string } | null = null;
@@ -523,6 +530,7 @@ export class WorldEngine {
 
     this.particlePool = new ParticlePool(512);
     this.scene.add(this.particlePool.mesh);
+    this.combatFx = new CombatFX(this.scene, this.origin, (x, y, z, c, n) => this.particlePool.spawnBurst(x, y, z, c, n));
   }
 
   private initWorldAndEntities() {
@@ -1365,46 +1373,185 @@ export class WorldEngine {
     this.callbacks.onPlayerStatsUpdate({ x: this.playerState.x, y: this.playerState.y, z: this.playerState.z });
   }
 
-  public performMeleeAttack() {
-    if (this.gameMode !== 'playing' || this.playerState.cooldowns.melee > 0 || this.atHelmShipId) return;
-    this.meleeComboStep = (this.meleeComboStep % 3) + 1;
-    this.meleeComboResetTimer = 1.4;
-    this.playerState.cooldowns.melee = this.meleeComboStep === 3 ? 0.56 : 0.34;
-    this.attackSwingTimer = 0.28;
-    this.playerModel.character.play('strike');
-    this.playerSquashY = 0.88;
-    soundEngine.triggerCue('melee', this.meleeComboStep === 3 ? 'Heavy Cleave!' : 'Blade Strike');
+  // --- Combat helpers -------------------------------------------------------
 
+  private get heroClass() {
+    return this.playerState.appearance?.heroClass ?? 'warden';
+  }
+
+  private get facingYaw() {
+    return this.playerModel.group.rotation.y;
+  }
+
+  /** Nearest living enemy in front of the player within range and cone (radians, half-angle). */
+  private findTarget(range: number, halfCone: number): EnemyRuntime | null {
     const px = this.playerState.x;
     const pz = this.playerState.z;
+    const yaw = this.facingYaw;
+    let best: EnemyRuntime | null = null;
+    let bestScore = Infinity;
+    const list = this.activeDungeon ? this.dungeonEnemies : this.enemies;
+    for (const e of list) {
+      if (!e.alive) continue;
+      const dx = e.x - px;
+      const dz = e.z - pz;
+      const d = Math.hypot(dx, dz);
+      if (d > range + (e.isDragon ? 4 : 0)) continue;
+      let diff = Math.atan2(dx, dz) - yaw;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      if (Math.abs(diff) > halfCone && d > 2) continue;
+      const score = d + Math.abs(diff) * 6;
+      if (score < bestScore) {
+        bestScore = score;
+        best = e;
+      }
+    }
+    return best;
+  }
+
+  private enemiesInCone(range: number, halfCone: number, cx = this.playerState.x, cz = this.playerState.z): EnemyRuntime[] {
+    const yaw = this.facingYaw;
+    const list = this.activeDungeon ? this.dungeonEnemies : this.enemies;
+    return list.filter((e) => {
+      if (!e.alive) return false;
+      const dx = e.x - cx;
+      const dz = e.z - cz;
+      const d = Math.hypot(dx, dz);
+      if (d > range + (e.isDragon ? 3 : 0)) return false;
+      if (halfCone >= Math.PI) return true;
+      let diff = Math.atan2(dx, dz) - yaw;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      return Math.abs(diff) <= halfCone || d < 1.6;
+    });
+  }
+
+  private enemyAimPoint(e: EnemyRuntime): THREE.Vector3 {
+    return new THREE.Vector3(e.x, groundHeightAt(e.x, e.z) + (e.isDragon ? 4 : 1.2), e.z);
+  }
+
+  /** Point straight ahead of the player at a given distance (world coords). */
+  private aheadPoint(dist: number, height = 1.2): THREE.Vector3 {
+    const x = this.playerState.x + Math.sin(this.facingYaw) * dist;
+    const z = this.playerState.z + Math.cos(this.facingYaw) * dist;
+    return new THREE.Vector3(x, Math.max(groundHeightAt(x, z), WATER_LEVEL) + height, z);
+  }
+
+  /** World position of the staff crystal or casting hand. */
+  private castOrigin(side: 'L' | 'R' = 'R'): THREE.Vector3 {
+    this.playerModel.group.updateMatrixWorld(true);
+    return this.combatFx.toWorld(this.playerModel.character.getCastPoint(new THREE.Vector3(), side));
+  }
+
+  private igniteBrushAt(x: number, z: number, radius: number) {
+    let lit = false;
+    this.brushPatches.forEach((bp) => {
+      if (!bp.burnedOut && bp.burningTimer <= 0 && Math.hypot(bp.x - x, bp.z - z) < radius) {
+        bp.burningTimer = 8.0;
+        (bp.mesh.material as THREE.MeshStandardMaterial).emissive.setHex(0xf97316);
+        (bp.mesh.material as THREE.MeshStandardMaterial).emissiveIntensity = 1.6;
+        lit = true;
+      }
+    });
+    if (lit) this.callbacks.onCombatLog('Fire ignited dense brush, creating a burning hazard!', 'world');
+  }
+
+  private onPlayerHit(manaGain = 6) {
+    this.recentCombatTimer = 6.5;
+    this.hitstopTimer = Math.max(this.hitstopTimer, 0.045);
+    const gain = this.unlockedSkills.includes('gale_tempest') ? manaGain * 2.3 : manaGain;
+    this.playerState.mana = Math.min(this.playerState.maxMana, this.playerState.mana + gain);
+    this.callbacks.onPlayerStatsUpdate({ mana: this.playerState.mana });
+  }
+
+  // --- J: weapon attack, matched to what the hero carries ---------------------
+
+  public performMeleeAttack() {
+    if (this.gameMode !== 'playing' || this.playerState.cooldowns.melee > 0 || this.atHelmShipId) return;
+    const style = this.playerModel.character.attackStyle;
+    this.meleeComboStep = (this.meleeComboStep % 3) + 1;
+    this.meleeComboResetTimer = 1.4;
+    this.attackSwingTimer = 0.28;
     const comboMult = this.meleeComboStep === 3 ? 1.45 : this.meleeComboStep === 2 ? 1.15 : 1.0;
     const baseDmg =
       (24 + (this.playerState.level - 1) * 4 + (this.playerState.equippedWeapon === 'ember_greatsword' ? 18 : 8)) *
       comboMult;
 
-    let hitAny = false;
-    const list = this.activeDungeon ? this.dungeonEnemies : this.enemies;
-    list.forEach((enemy) => {
-      if (!enemy.alive) return;
-      const hitRadius = enemy.isDragon ? 6.6 : 4.7;
-      if (Math.hypot(enemy.x - px, enemy.z - pz) <= hitRadius) {
-        hitAny = true;
-        this.damageEnemy(enemy, baseDmg, 'physical');
-      }
+    // Ranger: draw and loose an arrow with real drop
+    if (style === 'bow') {
+      this.playerState.cooldowns.melee = 0.62;
+      this.playerModel.character.play('shoot');
+      soundEngine.triggerCue('melee', 'Arrow Loosed');
+      this.combatFx.after(0.34, () => {
+        const target = this.findTarget(48, 0.5);
+        const from = this.castOrigin('L');
+        const aim = target ? this.enemyAimPoint(target) : this.aheadPoint(45, 1.6);
+        this.combatFx.arrow(from, aim, (hit) => {
+          if (!hit) return;
+          const crit = this.isCrouching ? 2 : 1;
+          this.damageEnemy(hit as EnemyRuntime, baseDmg * 1.15 * crit, 'physical');
+          if (crit > 1) this.callbacks.onCombatLog('Sneak shot! Double damage.', 'combo');
+          this.onPlayerHit(5);
+        }, target);
+      });
+      return;
+    }
+
+    // Arcanist: staff fires a homing arcane bolt
+    if (style === 'staff') {
+      this.playerState.cooldowns.melee = 0.5;
+      this.playerModel.character.play('castPush');
+      soundEngine.triggerCue('melee', 'Arcane Bolt');
+      this.combatFx.after(0.2, () => {
+        const target = this.findTarget(32, 0.7);
+        const from = this.castOrigin('R');
+        const aim = target ? this.enemyAimPoint(target) : this.aheadPoint(30);
+        this.combatFx.orb('arcane', from, aim, (hit, at) => {
+          this.particlePool.spawnBurst(this.origin.toLocalX(at.x), at.y, this.origin.toLocalZ(at.z), 0xffd66b, 12);
+          if (!hit) return;
+          this.damageEnemy(hit as EnemyRuntime, baseDmg * 0.95, 'physical');
+          this.onPlayerHit(9);
+        }, target);
+      });
+      return;
+    }
+
+    // Close weapons: sword / axe / hammer / spear / dagger hit only what is in front
+    const dagger = style === 'dagger';
+    const reach = dagger ? 3.2 : style === 'spear' ? 5.6 : style === 'hammer' ? 4.4 : 4.7;
+    const cone = dagger ? 0.9 : style === 'spear' ? 0.6 : 1.75;
+    this.playerState.cooldowns.melee = dagger ? 0.24 : this.meleeComboStep === 3 ? 0.56 : 0.34;
+    this.playerModel.character.play(dagger || style === 'spear' ? 'thrust' : 'strike');
+    this.playerSquashY = 0.88;
+    soundEngine.triggerCue('melee', dagger ? 'Quick Stab' : this.meleeComboStep === 3 ? 'Heavy Cleave!' : 'Blade Strike');
+
+    const fxAt = new THREE.Vector3(this.playerState.x, this.playerState.y + 1.1, this.playerState.z);
+    this.combatFx.after(dagger ? 0.08 : 0.16, () => {
+      this.combatFx.slash(fxAt, this.facingYaw, {
+        radius: reach * 0.75,
+        arc: dagger ? 0.7 : style === 'spear' ? 0.4 : 2.4,
+        thin: dagger || style === 'spear',
+        tilt: this.meleeComboStep === 2 ? -0.5 : 0.3,
+        color: this.playerState.equippedWeapon === 'ember_greatsword' ? 0xffa040 : 0xfff1c2,
+      });
     });
 
-    if (hitAny) {
-      this.recentCombatTimer = 6.5;
-      this.hitstopTimer = Math.max(this.hitstopTimer, 0.045);
-      const manaGain = this.unlockedSkills.includes('gale_tempest') ? 14 : 6;
-      this.playerState.mana = Math.min(this.playerState.maxMana, this.playerState.mana + manaGain);
-      this.callbacks.onPlayerStatsUpdate({ mana: this.playerState.mana });
-    }
+    const hits = this.enemiesInCone(reach, cone);
+    hits.forEach((enemy) => {
+      const sneak = dagger && this.isCrouching ? 2.2 : 1;
+      this.damageEnemy(enemy, baseDmg * (dagger ? 0.8 : 1) * sneak, 'physical');
+      if (sneak > 1) this.callbacks.onCombatLog('Backstab! Sneak attack damage.', 'combo');
+    });
+    if (hits.length) this.onPlayerHit(6);
   }
+
+  // --- 1-4: elemental powers, each a real effect in the world ----------------
 
   public castElementalSpell(element: Exclude<ElementType, 'physical'>) {
     if (this.gameMode !== 'playing' || this.playerState.cooldowns[element] > 0) return;
-    const manaCost = element === 'gale' ? 14 : 18;
+    const isMage = this.heroClass === 'mage';
+    const manaCost = (element === 'gale' ? 14 : 18) * (isMage ? 0.85 : 1);
     if (this.playerState.mana < manaCost) {
       this.callbacks.onCombatLog('Insufficient Mana for elemental spell.', 'warning');
       return;
@@ -1419,9 +1566,6 @@ export class WorldEngine {
     this.playerState.cooldowns[element] = (element === 'gale' ? 2.2 : 2.6) * stormCdMult;
     this.playerState.elementalUses[element] += 1;
     this.attackSwingTimer = 0.32;
-    this.playerModel.character.play('cast');
-    this.playerSquashY = 1.18;
-    this.screenShake = 0.22;
     this.recentCombatTimer = 6.5;
     soundEngine.triggerCue(element);
 
@@ -1430,14 +1574,6 @@ export class WorldEngine {
     const pz = this.playerState.z;
     const lx = this.origin.toLocalX(px);
     const lz = this.origin.toLocalZ(pz);
-
-    const spellColors: Record<Exclude<ElementType, 'physical'>, number> = {
-      fire: 0xf97316,
-      lightning: 0x38bdf8,
-      frost: 0x67e8f9,
-      gale: 0x4ade80,
-    };
-    this.particlePool.spawnBurst(lx, py + 1.2, lz, spellColors[element], 20);
 
     let dmg = 34 + this.playerState.level * 5;
     const weatherModMap = elementReactions.weatherModifiers[this.weather] as Record<string, number> | undefined;
@@ -1448,31 +1584,87 @@ export class WorldEngine {
     if (element === 'lightning' && this.unlockedSkills.includes('lightning_arc')) dmg *= 1.25;
     if (element === 'frost' && this.unlockedSkills.includes('frost_rime')) dmg *= 1.25;
     if (this.playerState.equippedRelic === 'crown_amulet') dmg *= 1.2;
+    if (isMage) dmg *= 1.2;
 
-    if (!this.activeDungeon) {
-      if (element === 'fire') {
-        this.brushPatches.forEach((bp) => {
-          if (!bp.burnedOut && Math.hypot(bp.x - px, bp.z - pz) < 9.5) {
-            bp.burningTimer = 8.0;
-            (bp.mesh.material as THREE.MeshStandardMaterial).emissive.setHex(0xf97316);
-            (bp.mesh.material as THREE.MeshStandardMaterial).emissiveIntensity = 1.6;
-            this.callbacks.onCombatLog('Fire ignited dense brush — creating a burning hazard!', 'world');
-          }
-        });
-      } else if (element === 'lightning') {
-        if (this.isSwimming || isWaterAt(px, pz) || this.weather === 'Rain' || this.weather === 'Thunderstorm') {
-          const ring = new THREE.Mesh(
-            new THREE.RingGeometry(1.5, 8.5, 32),
-            new THREE.MeshBasicMaterial({ color: 0x38bdf8, side: THREE.DoubleSide, transparent: true, opacity: 0.65 })
-          );
-          ring.rotation.x = -Math.PI / 2;
-          ring.position.set(lx, Math.max(WATER_LEVEL + 0.08, py + 0.1), lz);
-          this.overworldGroup.add(ring);
-          this.shockZones.push({ x: px, z: pz, timer: 4.5, ring });
-          dmg *= 1.35;
-          this.callbacks.onCombatLog('Tempest Arc electrified wet ground! (+35% Shock)', 'combo');
+    // [1] FIREBALL: thrown from the hand/staff, explodes where it lands
+    if (element === 'fire') {
+      this.playerModel.character.play('castPush');
+      this.combatFx.after(0.2, () => {
+        const target = this.findTarget(34, 0.6);
+        const from = this.castOrigin('R');
+        const aim = target ? this.enemyAimPoint(target) : this.aheadPoint(26, 0.4);
+        this.combatFx.orb('fire', from, aim, (_hit, at) => {
+          const radius = 4.6;
+          this.combatFx.explosion(at, 0xff6a00, radius);
+          this.screenShake = Math.max(this.screenShake, 0.35);
+          this.enemiesInCone(radius, Math.PI, at.x, at.z).forEach((e) => {
+            const falloff = 1 - Math.min(0.6, Math.hypot(e.x - at.x, e.z - at.z) / radius * 0.6);
+            this.damageEnemy(e, dmg * 1.1 * falloff, 'fire');
+          });
+          if (!this.activeDungeon) this.igniteBrushAt(at.x, at.z, 6.5);
+        }, target);
+      });
+      return;
+    }
+
+    // [2] LIGHTNING: instant bolt from the raised hand, chains to 2 more enemies
+    if (element === 'lightning') {
+      this.playerModel.character.play('castPoint');
+      let wetBonus = 1;
+      if (!this.activeDungeon && (this.isSwimming || isWaterAt(px, pz) || this.weather === 'Rain' || this.weather === 'Thunderstorm')) {
+        const ring = new THREE.Mesh(
+          new THREE.RingGeometry(1.5, 8.5, 32),
+          new THREE.MeshBasicMaterial({ color: 0x38bdf8, side: THREE.DoubleSide, transparent: true, opacity: 0.65 })
+        );
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.set(lx, Math.max(WATER_LEVEL + 0.08, py + 0.1), lz);
+        this.overworldGroup.add(ring);
+        this.shockZones.push({ x: px, z: pz, timer: 4.5, ring });
+        wetBonus = 1.35;
+        this.callbacks.onCombatLog('Tempest Arc electrified wet ground! (+35% Shock)', 'combo');
+      }
+      this.combatFx.after(0.24, () => {
+        const from = this.castOrigin('R');
+        const first = this.findTarget(24, 0.8);
+        if (!first) {
+          const ground = this.aheadPoint(12, 0);
+          this.combatFx.lightning(from, [ground]);
+          this.enemiesInCone(3, Math.PI, ground.x, ground.z).forEach((e) => this.damageEnemy(e, dmg * wetBonus, 'lightning'));
+          this.screenShake = Math.max(this.screenShake, 0.25);
+          return;
         }
-      } else if (element === 'frost') {
+        const chain: EnemyRuntime[] = [first];
+        const list = this.activeDungeon ? this.dungeonEnemies : this.enemies;
+        while (chain.length < 3) {
+          const last = chain[chain.length - 1];
+          const next = list
+            .filter((e) => e.alive && !chain.includes(e) && Math.hypot(e.x - last.x, e.z - last.z) < 9)
+            .sort((a, b) => Math.hypot(a.x - last.x, a.z - last.z) - Math.hypot(b.x - last.x, b.z - last.z))[0];
+          if (!next) break;
+          chain.push(next);
+        }
+        this.combatFx.lightning(from, chain.map((e) => this.enemyAimPoint(e)));
+        chain.forEach((e, i) => this.damageEnemy(e, dmg * wetBonus * (i === 0 ? 1.15 : 0.6), 'lightning'));
+        if (chain.length > 1) this.callbacks.onCombatLog(`Chain Lightning arced through ${chain.length} foes!`, 'combo');
+        this.screenShake = Math.max(this.screenShake, 0.3);
+      });
+      return;
+    }
+
+    // [3] FROST CONE: ice shards spray forward, freezing what they hit
+    if (element === 'frost') {
+      this.playerModel.character.play('castCone');
+      const range = 10;
+      const half = 0.75;
+      this.combatFx.after(0.18, () => {
+        const from = this.castOrigin('R');
+        this.combatFx.frostCone(from, this.facingYaw, range, half);
+        this.enemiesInCone(range, half).forEach((e) => {
+          this.damageEnemy(e, dmg * 0.95, 'frost');
+          e.stunTimer = Math.max(e.stunTimer, 1.4);
+        });
+      });
+      if (!this.activeDungeon) {
         // Law 4: Frost puts out burning fires nearby
         this.brushPatches.forEach((bp) => {
           if (bp.burningTimer > 0 && Math.hypot(bp.x - px, bp.z - pz) < 10.5) {
@@ -1482,8 +1674,8 @@ export class WorldEngine {
             this.callbacks.onCombatLog('Glacial Surge extinguished nearby flames!', 'world');
           }
         });
-        const fx = px + Math.sin(this.playerModel.group.rotation.y) * 4.5;
-        const fz = pz + Math.cos(this.playerModel.group.rotation.y) * 4.5;
+        const fx = px + Math.sin(this.facingYaw) * 4.5;
+        const fz = pz + Math.cos(this.facingYaw) * 4.5;
         if (isWaterAt(fx, fz) || isWaterAt(px, pz)) {
           const bx = isWaterAt(fx, fz) ? fx : px;
           const bz = isWaterAt(fx, fz) ? fz : pz;
@@ -1503,29 +1695,37 @@ export class WorldEngine {
           });
           this.callbacks.onCombatLog('Glacial Surge froze a walkable ice floe over water!', 'world');
         }
-      } else if (element === 'gale') {
-        const lift = this.unlockedSkills.includes('gale_updraft') ? 16.5 : 13.0;
-        this.velocityY = lift;
-        this.isGrounded = false;
-        const ring = new THREE.Mesh(
-          new THREE.TorusGeometry(2.3, 0.09, 8, 24),
-          new THREE.MeshBasicMaterial({ color: 0x4ade80, transparent: true, opacity: 0.72 })
-        );
-        ring.rotation.x = Math.PI / 2;
-        ring.position.set(lx, py + 0.5, lz);
-        this.overworldGroup.add(ring);
-        this.updrafts.push({ x: px, z: pz, timer: 4.5, mesh: ring });
       }
+      return;
     }
 
-    const list = this.activeDungeon ? this.dungeonEnemies : this.enemies;
-    list.forEach((enemy) => {
-      if (!enemy.alive) return;
-      const range = enemy.isDragon ? 13.5 : 10.5;
-      if (Math.hypot(enemy.x - px, enemy.z - pz) <= range) {
-        this.damageEnemy(enemy, dmg, element);
-      }
+    // [4] GALE: wind burst launches the hero up and blasts nearby enemies back
+    this.playerModel.character.play('castSweep');
+    this.combatFx.galeBurst(new THREE.Vector3(px, py, pz), 7);
+    const radius = 7;
+    this.enemiesInCone(radius, Math.PI).forEach((e) => {
+      const dx = e.x - px;
+      const dz = e.z - pz;
+      const d = Math.max(0.5, Math.hypot(dx, dz));
+      const push = e.isDragon ? 0.8 : 4.5 * (1 - d / (radius + 1));
+      e.x += (dx / d) * push;
+      e.z += (dz / d) * push;
+      this.damageEnemy(e, dmg * 0.75, 'gale');
+      e.stunTimer = Math.max(e.stunTimer, 0.6);
     });
+    if (!this.activeDungeon) {
+      const lift = this.unlockedSkills.includes('gale_updraft') ? 16.5 : 13.0;
+      this.velocityY = lift;
+      this.isGrounded = false;
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(2.3, 0.09, 8, 24),
+        new THREE.MeshBasicMaterial({ color: 0x4ade80, transparent: true, opacity: 0.72 })
+      );
+      ring.rotation.x = Math.PI / 2;
+      ring.position.set(lx, py + 0.5, lz);
+      this.overworldGroup.add(ring);
+      this.updrafts.push({ x: px, z: pz, timer: 4.5, mesh: ring });
+    }
   }
 
   public commandCompanion(cmd: 'flank' | 'heal') {
@@ -1871,10 +2071,12 @@ export class WorldEngine {
             this.hitstopTimer = Math.max(0, this.hitstopTimer - fixedDt);
             return;
           }
+          this.prevSimPos.set(this.playerState.x, this.playerState.y, this.playerState.z);
           this.stepSimulation(fixedDt);
         }
       },
-      (frameDt, _alpha, smoothedMs) => {
+      (frameDt, alpha, smoothedMs) => {
+        this.renderAlpha = this.gameMode === 'playing' ? alpha : 1;
         this.clockState.step(frameDt, this.gameMode === 'playing');
         this.updateAtmosphereAndVisuals(frameDt);
         this.updateAdaptivePerformance(smoothedMs);
@@ -1911,6 +2113,7 @@ export class WorldEngine {
       if (this.meleeComboResetTimer <= 0) this.meleeComboStep = 0;
     }
     if (this.attackSwingTimer > 0) this.attackSwingTimer -= dt;
+    this.combatFx.update(dt, (this.activeDungeon ? this.dungeonEnemies : this.enemies) as FxTarget[], groundHeightAt);
     if (this.dodgeTimer > 0) this.dodgeTimer -= dt;
     if (this.oxygenWarnCooldown > 0) this.oxygenWarnCooldown -= dt;
     if (this.recentCombatTimer > 0) this.recentCombatTimer -= dt;
@@ -2377,8 +2580,18 @@ export class WorldEngine {
         mesh.userData.lastX = npc.x;
         mesh.userData.lastZ = npc.z;
         mesh.position.set(nx, groundHeightAt(npc.x, npc.z), nz);
+        // Distance LOD: full-rate animation up close, throttled mid-range, hidden far away.
+        const dist = Math.hypot(npc.x - this.playerState.x, npc.z - this.playerState.z);
+        mesh.visible = dist < 110 && !this.activeDungeon;
         const ch = mesh.userData.character as Character | undefined;
-        if (ch && mesh.visible) ch.update(dt, { speed: Math.min(6.5, npcSpeed * 0.8) });
+        if (ch && mesh.visible) {
+          const acc = ((mesh.userData.animAcc as number | undefined) ?? 0) + dt;
+          const interval = dist < 40 ? 0 : dist < 75 ? 1 / 20 : 1 / 8;
+          if (acc >= interval) {
+            ch.update(acc, { speed: Math.min(6.5, npcSpeed * 0.8) });
+            mesh.userData.animAcc = 0;
+          } else mesh.userData.animAcc = acc;
+        }
       }
     });
 
@@ -2503,8 +2716,14 @@ export class WorldEngine {
 
   private updateAtmosphereAndVisuals(dt: number) {
     const elapsed = this.clockState.elapsedPlaySeconds;
-    const plx = this.activeDungeon ? this.playerState.x : this.origin.toLocalX(this.playerState.x);
-    const plz = this.activeDungeon ? this.playerState.z : this.origin.toLocalZ(this.playerState.z);
+    // Interpolate between the last two fixed simulation steps so motion is smooth at any refresh rate.
+    const cur = this.renderPos.set(this.playerState.x, this.playerState.y, this.playerState.z);
+    if (Number.isFinite(this.prevSimPos.x) && this.prevSimPos.distanceToSquared(cur) < 25) {
+      cur.lerpVectors(this.prevSimPos, cur, this.renderAlpha);
+    }
+    const rY = cur.y;
+    const plx = this.activeDungeon ? cur.x : this.origin.toLocalX(cur.x);
+    const plz = this.activeDungeon ? cur.z : this.origin.toLocalZ(cur.z);
 
     // 1. Update Camera & Smooth Spring Target
     const camDelta = this.input.consumeCameraDelta();
@@ -2523,9 +2742,9 @@ export class WorldEngine {
     const activeShip = this.atHelmShipId ? this.ships.find((s) => s.id === this.atHelmShipId) : null;
     const lookAnchorX = activeShip ? this.origin.toLocalX(activeShip.x) : plx;
     const lookAnchorZ = activeShip ? this.origin.toLocalZ(activeShip.z) : plz;
-    const lookAnchorY = activeShip ? activeShip.y + 3.2 : this.playerState.y + (this.isCrouching ? 1.15 : 1.75);
+    const lookAnchorY = activeShip ? activeShip.y + 3.2 : rY + (this.isCrouching ? 1.15 : 1.75);
 
-    this.smoothCamTarget.lerp(new THREE.Vector3(lookAnchorX, lookAnchorY, lookAnchorZ), Math.min(1, dt * 10));
+    this.smoothCamTarget.lerp(this.tmpCamVec.set(lookAnchorX, lookAnchorY, lookAnchorZ), 1 - Math.exp(-dt * 12));
 
     const horizDist = Math.cos(this.cameraPitch) * this.cameraDist;
     const desiredCamX = this.smoothCamTarget.x + Math.sin(this.cameraYaw) * horizDist;
@@ -2546,8 +2765,8 @@ export class WorldEngine {
       extraColliders: this.activeDungeon ? undefined : this.vegetation.colliders,
     });
     this.smoothCamPos.lerp(
-      new THREE.Vector3(resolvedCamWorld.x - ox, resolvedCamWorld.y, resolvedCamWorld.z - oz),
-      Math.min(1, dt * 13)
+      this.tmpCamVec.set(resolvedCamWorld.x - ox, resolvedCamWorld.y, resolvedCamWorld.z - oz),
+      1 - Math.exp(-dt * 14)
     );
 
     if (this.screenShake > 0) {
@@ -2563,15 +2782,15 @@ export class WorldEngine {
     this.camera.lookAt(this.smoothCamTarget);
 
     // 2. Player Procedural Rig Animation (Walk / Swim / Crouch / Block / Attack)
-    this.playerModel.group.position.set(plx, this.playerState.y, plz);
+    this.playerModel.group.position.set(plx, rY, plz);
     this.playerSquashY = THREE.MathUtils.lerp(this.playerSquashY, 1.0, Math.min(1, dt * 12));
     this.playerModel.bodyPivot.scale.set(1, this.playerSquashY, 1);
 
     // Real ground speed from position change (world units/s), mapped to the rig's gait scale.
     // Game run speed 7.8 -> jog, sprint 12.6 -> full sprint.
-    const pdx = this.playerState.x - this.lastAnimPos.x;
-    const pdz = this.playerState.z - this.lastAnimPos.z;
-    this.lastAnimPos.set(this.playerState.x, this.playerState.y, this.playerState.z);
+    const pdx = cur.x - this.lastAnimPos.x;
+    const pdz = cur.z - this.lastAnimPos.z;
+    this.lastAnimPos.copy(cur);
     const groundSpeed = dt > 0 ? Math.min(30, Math.hypot(pdx, pdz) / dt) : 0;
     const turnDelta = this.playerModel.group.rotation.y - this.lastAnimYaw;
     this.lastAnimYaw = this.playerModel.group.rotation.y;
