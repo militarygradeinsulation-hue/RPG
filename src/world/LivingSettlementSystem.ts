@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { PBRTextureSet } from '../render/MaterialLibrary';
 import { groundHeightAt } from './TerrainHeightfield';
 import { BuildingPlan, SettlementPlan, settlementCellAt, settlementsForCell, SETTLEMENT_CELL_SIZE } from './SettlementGenerator';
 
@@ -31,13 +32,19 @@ export class LivingSettlementSystem {
   private lastCellZ = Number.NaN;
   public readonly visibleSettlements: SettlementPlan[] = [];
 
-  constructor() {
+  constructor(stonePbr: PBRTextureSet, woodPbr: PBRTextureSet) {
     this.wallMaterials = [0x778495, 0xb8a58d, 0x82766e, 0x9e9383, 0x6b777f, 0xa5967f]
-      .map(color => new THREE.MeshStandardMaterial({ color, roughness: 0.85 }));
+      .map(color => new THREE.MeshStandardMaterial({
+        color, map: stonePbr.map, normalMap: stonePbr.normalMap,
+        roughnessMap: stonePbr.roughnessMap, roughness: 0.85,
+      }));
     this.roofMaterials = [0x424d63, 0x60483e, 0x464f47, 0x473c53, 0x555f65, 0x735543]
-      .map(color => new THREE.MeshStandardMaterial({ color, roughness: 0.91 }));
-    this.timber = new THREE.MeshStandardMaterial({ color: 0x4e372c, roughness: 0.9 });
-    this.floorMat = new THREE.MeshStandardMaterial({ color: 0x6c665c, roughness: 0.95 });
+      .map(color => new THREE.MeshStandardMaterial({
+        color, map: woodPbr.map, normalMap: woodPbr.normalMap,
+        roughnessMap: woodPbr.roughnessMap, roughness: 0.91,
+      }));
+    this.timber = new THREE.MeshStandardMaterial({ color: 0x4e372c, map: woodPbr.map, normalMap: woodPbr.normalMap, roughness: 0.9 });
+    this.floorMat = new THREE.MeshStandardMaterial({ color: 0x6c665c, map: stonePbr.map, normalMap: stonePbr.normalMap, roughness: 0.95 });
     this.glassMat = new THREE.MeshStandardMaterial({
       color: 0xf0c981, emissive: 0xf4a739, emissiveIntensity: 0.55, roughness: 0.3,
     });
