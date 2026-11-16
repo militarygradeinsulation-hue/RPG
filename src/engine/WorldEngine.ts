@@ -2486,9 +2486,16 @@ export class WorldEngine {
       waveSampler: this.waveSampler,
     });
 
-    this.playerState.x = res.x;
+    // Architectural collision is calculated in world space after terrain,
+    // foliage and ship physics, so front doors remain traversable.
+    const buildingResolved = this.activeDungeon
+      ? { x: res.x, z: res.z }
+      : this.livingSettlements.resolvePlayerMovement(
+          this.playerState.x, this.playerState.z, res.x, res.z
+        );
+    this.playerState.x = buildingResolved.x;
     this.playerState.y = res.y;
-    this.playerState.z = res.z;
+    this.playerState.z = buildingResolved.z;
     this.velocityY = res.vy;
     this.isGrounded = res.isGrounded;
     this.isSwimming = res.isSwimming;
