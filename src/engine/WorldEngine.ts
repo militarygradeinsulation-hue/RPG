@@ -54,6 +54,7 @@ import { ChunkStreamer } from '../world/ChunkStreamer';
 import { buildWorldArchitectureAndHarbors, HarborDockAnchor } from '../world/POIGenerator';
 import { getBiomeAt, groundHeightAt, isWaterAt, WATER_LEVEL } from '../world/TerrainHeightfield';
 import { VegetationSystem } from '../world/VegetationSystem';
+import { LivingSettlementSystem } from '../world/LivingSettlementSystem';
 import { generateSeaWrecks, SalvageWreckDef, WORLD_POIS } from '../world/ocean/ArchipelagoGen';
 import { OceanSurface } from '../world/ocean/OceanSurface';
 import { OceanWaveSampler } from '../world/ocean/OceanWaveSampler';
@@ -262,6 +263,7 @@ export class WorldEngine {
   private oceanSurface!: OceanSurface;
   private chunkStreamer!: ChunkStreamer;
   private vegetation!: VegetationSystem;
+  private livingSettlements!: LivingSettlementSystem;
   private seaLife!: SeaLifeSystem;
 
   private readonly snowUniforms: SnowShaderUniforms = {
@@ -588,6 +590,12 @@ export class WorldEngine {
       true
     );
     this.overworldGroup.add(this.vegetation.group);
+
+    // Deterministic inhabited settlements beyond the original fixed villages.
+    // The streaming system creates and retires only the 3x3 nearby cell region.
+    this.livingSettlements = new LivingSettlementSystem();
+    this.livingSettlements.update(this.playerState.x, this.playerState.z, this.origin.originX, this.origin.originZ);
+    this.overworldGroup.add(this.livingSettlements.group);
 
     // 4. Suncrest Citadel Plaza + Central Crystal Spire + Towns + Harbors + Lighthouses
     this.buildCitadelAndShrines();
@@ -2181,6 +2189,7 @@ export class WorldEngine {
         const shifted = this.origin.update(this.playerState.x, this.playerState.z, [
           this.chunkStreamer.group,
           this.vegetation.group,
+          this.livingSettlements.group,
           this.seaLife.group,
           ...this.npcMeshes.values(),
           ...this.outpostMeshes.values(),
@@ -2212,6 +2221,7 @@ export class WorldEngine {
         this.origin.originZ,
         this.season
       );
+      this.livingSettlements.update(this.playerState.x, this.playerState.z, this.origin.originX, this.origin.originZ);
       this.seaLife.update(dt, elapsed, this.origin.originX, this.origin.originZ, this.waveSampler);
 
       // Regional story discovery is proximity based and throttled to avoid
@@ -3131,6 +3141,21 @@ export class WorldEngine {
         }
       });
 
+      // Procedurally streamed towns appear on navigation just like hand-made
+      // settlements. Only active nearby world cells are included.
+      this.livingSettlements.visibleSettlements.forEach((site) => {
+        miniMapEntities.push({
+          id: site.id, kind: 'town', x: site.x, z: site.z,
+          color: '#f3c57b', label: site.name,
+        });
+        compassMarkers.push({
+          id: site.id, kind: 'town', label: site.name,
+          x: site.x, z: site.z,
+          distance: Math.round(Math.hypot(site.x - this.playerState.x, site.z - this.playerState.z)),
+          color: '#f3c57b',
+        });
+      });
+
       WORLD_POIS.forEach((poi) => {
         if (poi.kind === 'harbor') {
           miniMapEntities.push({ id: poi.id, kind: 'harbor', x: poi.x, z: poi.z, color: '#60a5fa', label: poi.name });
@@ -3225,7 +3250,8 @@ export class WorldEngine {
       !this.activeDungeon &&
       (this.npcs.some((n) => Math.hypot(n.x - this.playerState.x, n.z - this.playerState.z) < 24) ||
         this.outposts.some((o) => Math.hypot(o.x - this.playerState.x, o.z - this.playerState.z) < 28) ||
-        this.harborAnchors.some((h) => Math.hypot(h.x - this.playerState.x, h.z - this.playerState.z) < 32));
+        this.harborAnchors.some((h) => Math.hypot(h.x - this.playerState.x, h.z - this.playerState.z) < 32) ||
+        this.livingSettlements.visibleSettlements.some((site) => Math.hypot(site.x - this.playerState.x, site.z - this.playerState.z) < 40));
 
     this.callbacks.onHudTick({
       currentBiome: this.currentBiome,
@@ -3278,6 +3304,7 @@ export class WorldEngine {
     this.chunkStreamer.dispose();
     this.oceanSurface.dispose();
     this.vegetation.dispose();
+    this.livingSettlements.dispose();
     this.skyWeather.dispose();
     this.particlePool.dispose();
     this.pipeline.dispose();
