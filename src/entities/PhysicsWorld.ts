@@ -156,26 +156,48 @@ export function stepPlayerPhysics(params: {
     };
   }
 
-  // Push out from static colliders & nearby tree/boulder colliders (Law 1: zero clipping)
-  const resolveCirclePush = (list: CircleCollider[]) => {
-    for (let i = 0; i < list.length; i++) {
-      const c = list[i];
-      const dx = nextX - c.x;
-      const dz = nextZ - c.z;
-      const distSq = dx * dx + dz * dz;
-      const minR = c.radius + 0.52;
-      if (distSq < minR * minR && distSq > 0.00001) {
+  // Sweep each axis separately, then resolve residual overlap. Independent axis
+  // movement allows the player to slide along obstacles instead of snapping
+  // diagonally away from them. Include the degenerate exact-centre case.
+  const playerRadius = 0.52;
+  const candidateColliders = extraColliders?.length
+    ? [...colliders, ...extraColliders]
+    : colliders;
+  const resolveAxis = (axis: 'x' | 'z', proposed: number, other: number) => {
+    let value = proposed;
+    for (let pass = 0; pass < 2; pass++) {
+      for (const c of candidateColliders) {
         if (c.height !== undefined && y > groundHeightAt(c.x, c.z) + c.height) continue;
-        const dist = Math.sqrt(distSq);
-        const push = (minR - dist) / dist;
-        nextX += dx * push;
-        nextZ += dz * push;
+        const radius = c.radius + playerRadius;
+        const fixedOffset = other - (axis === 'x' ? c.z : c.x);
+        if (Math.abs(fixedOffset) >= radius) continue;
+        const center = axis === 'x' ? c.x : c.z;
+        const reach = Math.sqrt(Math.max(0, radius * radius - fixedOffset * fixedOffset));
+        const delta = value - center;
+        if (Math.abs(delta) < reach) {
+          // Prefer the incoming side if we start inside an obstacle.
+          const start = axis === 'x' ? x : z;
+          const startDelta = start - center;
+          // Do not tunnel through a collider when a frame's proposed
+          // movement crosses its centre. Resolve toward the entry side.
+          const sign = Math.abs(startDelta) >= reach - 1e-4
+            ? Math.sign(startDelta)
+            : Math.abs(delta) > 1e-6
+              ? Math.sign(delta)
+              : (startDelta < 0 ? -1 : 1);
+          value = center + sign * reach;
+        }
       }
     }
+    return value;
   };
-  resolveCirclePush(colliders);
-  if (extraColliders && extraColliders.length > 0) {
-    resolveCirclePush(extraColliders);
+  // Resolve the dominant motion axis first to reduce corner jitter.
+  if (Math.abs(nextX - x) >= Math.abs(nextZ - z)) {
+    nextX = resolveAxis('x', nextX, z);
+    nextZ = resolveAxis('z', nextZ, nextX);
+  } else {
+    nextZ = resolveAxis('z', nextZ, x);
+    nextX = resolveAxis('x', nextX, nextZ);
   }
 
   // Check if player stands on a floating ship deck

@@ -24,6 +24,7 @@ export class ChunkStreamer {
   private chunks: StreamedChunk[] = [];
   private worker: Worker | null = null;
   private jobCounter = 1;
+  private generation = 0;
   private lastCx = 99999;
   private lastCz = 99999;
   private horizonRingMesh: THREE.Mesh | null = null;
@@ -105,7 +106,9 @@ export class ChunkStreamer {
     const cz = Math.round(worldZ / CHUNK_SIZE);
     this.lastCx = cx;
     this.lastCz = cz;
+    this.generation++;
 
+    this.generation++;
     const healths = this.extractHealths(biomes);
     const isWinter = season === 'Winter';
 
@@ -129,7 +132,7 @@ export class ChunkStreamer {
         this.group.add(chunk.mesh);
         this.chunks.push(chunk);
 
-        if (Math.abs(dx) <= 1 && Math.abs(dz) <= 1) {
+        if (Math.abs(dx) === 0 && Math.abs(dz) === 0) {
           const buffers = generateChunkBuffers(wx, wz, CHUNK_SIZE, CHUNK_SEGMENTS, healths, isWinter, season);
           this.writeBuffersToGeometry(geo, buffers);
         } else {
@@ -161,6 +164,7 @@ export class ChunkStreamer {
 
     this.lastCx = nextCx;
     this.lastCz = nextCz;
+    this.generation++;
 
     const needed: { cx: number; cz: number }[] = [];
     for (let dz = -this.radius; dz <= this.radius; dz++) {
@@ -187,6 +191,8 @@ export class ChunkStreamer {
       const wx = coord.cx * CHUNK_SIZE;
       const wz = coord.cz * CHUNK_SIZE;
       chunk.mesh.position.set(wx - originX, 0, wz - originZ);
+      // Never show an old chunk's geometry at new world coordinates.
+      chunk.mesh.visible = false;
       this.dispatchChunkJob(chunk, wx, wz, healths, isWinter, season);
     });
 
@@ -199,6 +205,7 @@ export class ChunkStreamer {
     biomes: Record<BiomeId, BiomeState>,
     season: SeasonType
   ): void {
+    this.generation++;
     const healths = this.extractHealths(biomes);
     const isWinter = season === 'Winter';
     this.chunks.forEach((chunk) => {
@@ -222,6 +229,8 @@ export class ChunkStreamer {
     if (this.worker) {
       const req: TerrainWorkerRequest = {
         jobId,
+        generation: this.generation,
+        priority: Math.abs(chunk.cx - this.lastCx) + Math.abs(chunk.cz - this.lastCz),
         cx: chunk.cx,
         cz: chunk.cz,
         centerX: wx,
@@ -236,6 +245,7 @@ export class ChunkStreamer {
     } else {
       const buffers = generateChunkBuffers(wx, wz, CHUNK_SIZE, CHUNK_SEGMENTS, healths, isWinter, season);
       this.writeBuffersToGeometry(chunk.mesh.geometry, buffers);
+      chunk.mesh.visible = true;
     }
   }
 
@@ -245,6 +255,7 @@ export class ChunkStreamer {
     );
     if (!chunk) return;
     this.writeBuffersToGeometry(chunk.mesh.geometry, res);
+    chunk.mesh.visible = true;
   }
 
   private writeBuffersToGeometry(

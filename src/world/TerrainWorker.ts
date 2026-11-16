@@ -3,6 +3,8 @@ import { generateChunkBuffers } from './TerrainHeightfield';
 
 export interface TerrainWorkerRequest {
   jobId: number;
+  generation: number;
+  priority?: number;
   cx: number;
   cz: number;
   centerX: number;
@@ -26,25 +28,43 @@ export interface TerrainWorkerResponse {
   indices: Uint32Array;
 }
 
-self.onmessage = (e: MessageEvent<TerrainWorkerRequest>) => {
-  const req = e.data;
-  const buffers = generateChunkBuffers(
-    req.centerX,
-    req.centerZ,
-    req.chunkSize,
-    req.segments,
-    req.biomeHealths,
-    req.isWinter,
-    req.season
-  );
+// Only process the newest request for each chunk coordinate. Yield between
+// jobs so new player positions can reprioritize the worker's queue.
+const pending = new Map<string, TerrainWorkerRequest>();
+let scheduled = false;
+let latestGeneration = 0;
 
+function processNext(): void {
+  scheduled = false;
+  if (pending.size === 0) return;
+
+  let chosenKey = '';
+  let chosen: TerrainWorkerRequest | null = null;
+  for (const [key, req] of pending) {
+    if (!chosen || (req.priority ?? 100) < (chosen.priority ?? 100) ||
+        ((req.priority ?? 100) === (chosen.priority ?? 100) && req.jobId > chosen.jobId)) {
+      chosen = req;
+      chosenKey = key;
+    }
+  }
+  if (!chosen) return;
+  pending.delete(chosenKey);
+
+  const buffers = generateChunkBuffers(
+    chosen.centerX,
+    chosen.centerZ,
+    chosen.chunkSize,
+    chosen.segments,
+    chosen.biomeHealths,
+    chosen.isWinter,
+    chosen.season
+  );
   const response: TerrainWorkerResponse = {
-    jobId: req.jobId,
-    cx: req.cx,
-    cz: req.cz,
+    jobId: chosen.jobId,
+    cx: chosen.cx,
+    cz: chosen.cz,
     ...buffers,
   };
-
   (self as unknown as Worker).postMessage(response, [
     buffers.positions.buffer,
     buffers.normals.buffer,
@@ -53,4 +73,25 @@ self.onmessage = (e: MessageEvent<TerrainWorkerRequest>) => {
     buffers.biomeAttr.buffer,
     buffers.indices.buffer,
   ]);
+  scheduleNext();
+}
+
+function scheduleNext(): void {
+  if (scheduled || pending.size === 0) return;
+  scheduled = true;
+  setTimeout(processNext, 0);
+}
+
+self.onmessage = (e: MessageEvent<TerrainWorkerRequest>) => {
+  const req = e.data;
+  // A full visible-set refresh supersedes older queued terrain jobs. Jobs
+  // already rendering may finish, but their generation IDs are checked by
+  // ChunkStreamer and cannot overwrite newer geometry.
+  if (req.generation < latestGeneration) return;
+  if (req.generation > latestGeneration) {
+    latestGeneration = req.generation;
+    pending.clear();
+  }
+  pending.set(`${req.cx}:${req.cz}`, req);
+  scheduleNext();
 };

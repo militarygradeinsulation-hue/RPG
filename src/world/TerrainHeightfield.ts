@@ -23,6 +23,12 @@ export const NAMED_ISLANDS: IslandDef[] = [
   { id: 'isle_siren', name: 'Siren’s Crown Isle', x: -12, z: 235, radius: 44, height: 14.5, biome: 'aether', hasHarbor: true, hasLighthouse: true },
   { id: 'isle_frostfang', name: 'Frostfang Outer Bastion', x: -195, z: 105, radius: 40, height: 13.0, biome: 'aether', hasWreck: true },
   { id: 'isle_smuggler', name: 'Smuggler’s Reef', x: 185, z: 228, radius: 30, height: 8.4, biome: 'ember', hasWreck: true },
+  // Outer sea expansion: distinct discoverable destinations whose height,
+  // biome, minimap marker, and landmark generation share the same source data.
+  { id: 'isle_moonveil', name: 'Moonveil Sanctuary', x: -275, z: 330, radius: 47, height: 18.0, biome: 'aether', hasLighthouse: true },
+  { id: 'isle_thornwild', name: 'Thornwild Expanse', x: -90, z: 405, radius: 58, height: 17.5, biome: 'verdant', hasWreck: true },
+  { id: 'isle_ashen', name: 'Ashen Crown Caldera', x: 225, z: 365, radius: 51, height: 22.0, biome: 'ember', hasLighthouse: true },
+  { id: 'isle_storm', name: 'Stormglass Reach', x: 35, z: 530, radius: 43, height: 15.0, biome: 'aether', hasWreck: true },
 ];
 
 export const ROAD_SEGMENTS: ReadonlyArray<{ ax: number; az: number; bx: number; bz: number; width: number }> = [

@@ -53,6 +53,10 @@ export function generateSeaWrecks(): SalvageWreckDef[] {
     { id: 'wreck_siren_reef', name: 'Siren’s Reef Cache', x: -85, z: 192, depthY: 0, rewardGold: 135, rewardItem: 'storm_crystal', looted: false },
     { id: 'wreck_frostfang', name: 'Frostfang Icebreaker', x: -178, z: 122, depthY: 0, rewardGold: 140, rewardItem: 'frost_lotus', looted: false },
     { id: 'wreck_smuggler', name: 'Smuggler’s Sloop', x: 168, z: 215, depthY: 0, rewardGold: 125, rewardItem: 'thermal_bomb', looted: false },
+    { id: 'wreck_moonveil', name: 'Moonveil Pilgrim Vessel', x: -293, z: 373, depthY: 0, rewardGold: 165, rewardItem: 'storm_crystal', looted: false },
+    { id: 'wreck_thornwild', name: 'Thornwild Expedition', x: -138, z: 452, depthY: 0, rewardGold: 185, rewardItem: 'ancient_timber', looted: false },
+    { id: 'wreck_ashen', name: 'Crownfire Merchantman', x: 270, z: 408, depthY: 0, rewardGold: 205, rewardItem: 'ember_ore', looted: false },
+    { id: 'wreck_stormglass', name: 'Stormglass Frigate', x: 78, z: 571, depthY: 0, rewardGold: 240, rewardItem: 'frost_lotus', looted: false },
   ];
 
   // Add deterministic seeded outer sea wrecks

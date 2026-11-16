@@ -21,6 +21,7 @@ export class InputManager {
   private pendingZoom = 0;
   private enabled = false;
   private rightMouseDown = false;
+  private pointerIds = new Set<number>();
   private cleanupFn: () => void = () => {};
 
   constructor(
@@ -45,6 +46,10 @@ export class InputManager {
     if (!v) {
       this.isDragging = false;
       this.rightMouseDown = false;
+      this.pointerIds.clear();
+      this.pendingYaw = 0;
+      this.pendingPitch = 0;
+      this.pendingZoom = 0;
       Object.keys(this.keys).forEach((k) => {
         this.keys[k] = false;
       });
@@ -126,6 +131,7 @@ export class InputManager {
     const onBlur = () => {
       this.isDragging = false;
       this.rightMouseDown = false;
+      this.pointerIds.clear();
       Object.keys(this.keys).forEach((k) => {
         this.keys[k] = false;
       });
@@ -138,6 +144,7 @@ export class InputManager {
         this.rightMouseDown = true;
       }
       if (e.button === 0 || e.button === 2) {
+        this.pointerIds.add(e.pointerId);
         this.isDragging = true;
         this.lastX = e.clientX;
         this.lastY = e.clientY;
@@ -155,7 +162,7 @@ export class InputManager {
         this.pendingPitch += THREE.MathUtils.clamp(e.movementY, -120, 120) * 0.0024;
         return;
       }
-      if (!this.isDragging) return;
+      if (!this.isDragging || !this.pointerIds.has(e.pointerId)) return;
       const dx = e.clientX - this.lastX;
       const dy = e.clientY - this.lastY;
       this.lastX = e.clientX;
@@ -166,11 +173,13 @@ export class InputManager {
 
     const onPointerUp = (e: PointerEvent) => {
       if (e.button === 2) this.rightMouseDown = false;
-      this.isDragging = false;
+      this.pointerIds.delete(e.pointerId);
+      this.isDragging = this.pointerIds.size > 0;
     };
 
     const onWheel = (e: WheelEvent) => {
       if (!this.enabled || !this.callbacks.isPlaying()) return;
+      e.preventDefault();
       this.pendingZoom += e.deltaY * 0.012;
     };
 
@@ -190,7 +199,8 @@ export class InputManager {
     this.dom.addEventListener('contextmenu', onContextMenu);
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
-    this.dom.addEventListener('wheel', onWheel, { passive: true });
+    window.addEventListener('pointercancel', onPointerUp);
+    this.dom.addEventListener('wheel', onWheel, { passive: false });
     document.addEventListener('pointerlockchange', onPointerLockChange);
 
     this.cleanupFn = () => {
@@ -202,6 +212,7 @@ export class InputManager {
       this.dom.removeEventListener('contextmenu', onContextMenu);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
       this.dom.removeEventListener('wheel', onWheel);
       document.removeEventListener('pointerlockchange', onPointerLockChange);
     };

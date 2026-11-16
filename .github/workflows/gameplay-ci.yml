@@ -1,0 +1,19 @@
+name: RPG gameplay checks
+on:
+  push:
+    branches: [main, 'fix/**']
+  pull_request:
+    branches: [main]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-audit --no-fund
+      - run: npx tsx --test src/core/GameLoop.test.ts
+      - run: npm run lint
+      - run: npm run build
