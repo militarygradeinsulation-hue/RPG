@@ -7,6 +7,9 @@ interface ActiveSettlement {
   plan: SettlementPlan;
   group: THREE.Group;
   roofs: { mesh: THREE.Object3D; x: number; z: number; radius: number }[];
+  residents: THREE.InstancedMesh;
+  residentHeads: THREE.InstancedMesh;
+  originHeight: number;
 }
 export class LivingSettlementSystem {
   public readonly group = new THREE.Group();
@@ -16,6 +19,12 @@ export class LivingSettlementSystem {
   private readonly timber: THREE.MeshStandardMaterial;
   private readonly floorMat: THREE.MeshStandardMaterial;
   private readonly glassMat: THREE.MeshStandardMaterial;
+  private readonly residentBodyGeo = new THREE.CapsuleGeometry(0.35, 0.95, 4, 7);
+  private readonly residentHeadGeo = new THREE.IcosahedronGeometry(0.31, 1);
+  private readonly residentBodyMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.96 });
+  private readonly residentHeadMat = new THREE.MeshStandardMaterial({ color: 0xd8b8a0, roughness: 0.94 });
+  private lastResidentStep = 0;
+  private readonly residentDummy = new THREE.Object3D();
   private lastCellX = Number.NaN;
   private lastCellZ = Number.NaN;
   public readonly visibleSettlements: SettlementPlan[] = [];
@@ -129,37 +138,26 @@ export class LivingSettlementSystem {
       root.add(built.group);
       roofs.push({ mesh: built.roof, x: building.x, z: building.z, radius: Math.max(building.width, building.depth) * 0.8 });
     }
-    // A real communal square with distinct, stationary residents. Character
-    // representation uses stylized meshes rather than adding thousands of rigs.
-    const bodyGeo = new THREE.CapsuleGeometry(0.34, 1.1, 4, 8);
-    const bodyMat = new THREE.MeshStandardMaterial({ color: 0x7c8fa3, roughness: 0.9 });
-    const body = new THREE.InstancedMesh(bodyGeo, bodyMat, Math.min(12, plan.residents));
-    const dummy = new THREE.Object3D();
-    for (let i = 0; i < body.count; i++) {
-      const angle = i * 2.399963 + plan.style;
-      const rx = plan.x + Math.cos(angle) * (4.5 + i * 0.62);
-      const rz = plan.z + Math.sin(angle) * (4.5 + i * 0.62);
-      dummy.position.set(rx - plan.x, groundHeightAt(rx, rz) - groundHeightAt(plan.x, plan.z) + 1.0, rz - plan.z);
-      dummy.rotation.set(0, angle, 0);
-      dummy.scale.setScalar(0.86 + ((i + plan.style) % 4) * 0.08);
-      dummy.updateMatrix();
-      body.setMatrixAt(i, dummy.matrix);
-      body.setColorAt(i, new THREE.Color().setHSL(((i * 0.13 + plan.style * 0.09) % 1), 0.26, 0.48));
-    }
-    body.instanceMatrix.needsUpdate = true;
+    // Compact wandering citizens: two instanced draw calls per settlement,
+    // with unique tunic colors and no heavy skeletal animation per resident.
+    const count = Math.min(12, plan.residents);
+    const body = new THREE.InstancedMesh(this.residentBodyGeo, this.residentBodyMat, count);
+    const heads = new THREE.InstancedMesh(this.residentHeadGeo, this.residentHeadMat, count);
+    body.frustumCulled = false;
+    heads.frustumCulled = false;
     root.position.set(plan.x - originX, groundHeightAt(plan.x, plan.z), plan.z - originZ);
-    root.add(body);
-    // Buildings are absolute world objects under a world-relative settlement
-    // root; offset their positions to match the settlement coordinate frame.
+    root.add(body, heads);
+    // Buildings use absolute placement before being added to the settlement
+    // root; convert them once into coordinates relative to that root.
     for (const child of root.children) {
-      if (child !== body) {
+      if (child !== body && child !== heads) {
         child.position.x -= plan.x;
         child.position.y -= groundHeightAt(plan.x, plan.z);
         child.position.z -= plan.z;
       }
     }
     this.group.add(root);
-    return { plan, group: root, roofs };
+    return { plan, group: root, roofs, residents: body, residentHeads: heads, originHeight: groundHeightAt(plan.x, plan.z) };
   }
 
   public update(worldX: number, worldZ: number, originX: number, originZ: number): void {
@@ -176,7 +174,6 @@ export class LivingSettlementSystem {
           this.group.remove(site.group);
           site.group.traverse(obj => {
             if (obj instanceof THREE.Mesh && !(obj instanceof THREE.InstancedMesh)) obj.geometry.dispose();
-            if (obj instanceof THREE.InstancedMesh) obj.geometry.dispose();
           });
           this.active.delete(key);
         }
@@ -186,6 +183,37 @@ export class LivingSettlementSystem {
       }
       this.visibleSettlements.length = 0;
       this.visibleSettlements.push(...Array.from(this.active.values(), site => site.plan));
+    }
+
+    // Residents wander near their settlement square. Update at 8 Hz to
+    // limit GPU buffer uploads while preserving visible motion and variation.
+    const now = performance.now();
+    if (now - this.lastResidentStep >= 125) {
+      this.lastResidentStep = now;
+      for (const site of this.active.values()) {
+        for (let i = 0; i < site.residents.count; i++) {
+          const phase = now * (0.00019 + (i % 4) * 0.000027) + i * 2.399963 + site.plan.style;
+          const radius = 4.5 + i * 0.75;
+          const wx = site.plan.x + Math.cos(phase) * radius;
+          const wz = site.plan.z + Math.sin(phase) * radius;
+          const y = groundHeightAt(wx, wz) - site.originHeight;
+          this.residentDummy.position.set(wx - site.plan.x, y + 1.05, wz - site.plan.z);
+          this.residentDummy.rotation.set(0, -phase, 0);
+          this.residentDummy.scale.setScalar(0.82 + ((i + site.plan.style) % 4) * 0.07);
+          this.residentDummy.updateMatrix();
+          site.residents.setMatrixAt(i, this.residentDummy.matrix);
+          site.residents.setColorAt(i, new THREE.Color().setHSL(
+            (i * 0.15 + site.plan.style * 0.09) % 1, 0.34, 0.42
+          ));
+          this.residentDummy.position.y = y + 2.15;
+          this.residentDummy.scale.setScalar(0.84);
+          this.residentDummy.updateMatrix();
+          site.residentHeads.setMatrixAt(i, this.residentDummy.matrix);
+        }
+        site.residents.instanceMatrix.needsUpdate = true;
+        if (site.residents.instanceColor) site.residents.instanceColor.needsUpdate = true;
+        site.residentHeads.instanceMatrix.needsUpdate = true;
+      }
     }
 
     // Called after floating-origin rebasing; keep camera and villages in
@@ -204,10 +232,14 @@ export class LivingSettlementSystem {
     for (const site of this.active.values()) {
       this.group.remove(site.group);
       site.group.traverse(obj => {
-        if (obj instanceof THREE.Mesh) obj.geometry.dispose();
+        if (obj instanceof THREE.Mesh && !(obj instanceof THREE.InstancedMesh)) obj.geometry.dispose();
       });
     }
     this.active.clear();
+    this.residentBodyGeo.dispose();
+    this.residentHeadGeo.dispose();
+    this.residentBodyMat.dispose();
+    this.residentHeadMat.dispose();
     [...this.wallMaterials, ...this.roofMaterials, this.timber, this.floorMat, this.glassMat]
       .forEach(material => material.dispose());
   }
