@@ -1,0 +1,113 @@
+{
+  "reactions": [
+    {
+      "id": "fire_frost",
+      "elements": ["fire", "frost"],
+      "name": "THERMAL SHATTER!",
+      "damageMultiplier": 2.2,
+      "stunSeconds": 0,
+      "effect": "Steam cloud that blocks vision; cancels opposite charges with thermal shock."
+    },
+    {
+      "id": "fire_air",
+      "elements": ["fire", "gale"],
+      "name": "INFERNO VORTEX!",
+      "damageMultiplier": 1.95,
+      "stunSeconds": 0,
+      "effect": "Fire grows and spreads in the wind direction; creates a fire tornado."
+    },
+    {
+      "id": "fire_oil",
+      "elements": ["fire", "oil"],
+      "name": "BLAZING DETONATION!",
+      "damageMultiplier": 2.35,
+      "stunSeconds": 0.6,
+      "effect": "Ignites oil or alcohol into an explosive shockwave."
+    },
+    {
+      "id": "fire_ice_wall",
+      "elements": ["fire", "ice_wall"],
+      "name": "MELTDOWN SURGE!",
+      "damageMultiplier": 1.4,
+      "stunSeconds": 0,
+      "effect": "Melts solid ice barriers into conductive water."
+    },
+    {
+      "id": "lightning_water",
+      "elements": ["lightning", "water"],
+      "name": "ARC FLOOD!",
+      "damageMultiplier": 2.0,
+      "stunSeconds": 1.2,
+      "effect": "Electrifies the water surface, doubling damage and chaining further."
+    },
+    {
+      "id": "lightning_metal",
+      "elements": ["lightning", "metal"],
+      "name": "CONDUCTIVE OVERLOAD!",
+      "damageMultiplier": 2.0,
+      "stunSeconds": 1.4,
+      "effect": "Seeks armored metal targets for double damage and extended chain."
+    },
+    {
+      "id": "frost_water",
+      "elements": ["frost", "water"],
+      "name": "GLACIAL BRIDGE!",
+      "damageMultiplier": 1.25,
+      "stunSeconds": 0.8,
+      "effect": "Freezes water into walkable ice that can trap vessels or swimmers."
+    },
+    {
+      "id": "frost_wet",
+      "elements": ["frost", "wet"],
+      "name": "INSTANT FREEZE!",
+      "damageMultiplier": 1.65,
+      "stunSeconds": 2.2,
+      "effect": "Freezes wet targets solid; heavy hits shatter frozen foes."
+    },
+    {
+      "id": "earth_fire",
+      "elements": ["earth", "fire"],
+      "name": "MAGMA CATAPULT!",
+      "damageMultiplier": 1.9,
+      "stunSeconds": 0.8,
+      "effect": "Molten rock projectile that burns on physical impact."
+    },
+    {
+      "id": "air_frost",
+      "elements": ["gale", "frost"],
+      "name": "RIME BLIZZARD!",
+      "damageMultiplier": 1.75,
+      "stunSeconds": 1.2,
+      "effect": "Freezing gale vortex that slows and blinds."
+    },
+    {
+      "id": "lightning_frost",
+      "elements": ["lightning", "frost"],
+      "name": "SUPERCONDUCT SHATTER!",
+      "damageMultiplier": 1.85,
+      "stunSeconds": 2.6,
+      "effect": "Brittle superconducting discharge that staggers and chains."
+    },
+    {
+      "id": "air_lightning",
+      "elements": ["gale", "lightning"],
+      "name": "TEMPEST CELL!",
+      "damageMultiplier": 1.85,
+      "stunSeconds": 1.6,
+      "effect": "Storm cell vortex that discharges erratic lightning arcs."
+    }
+  ],
+  "weatherModifiers": {
+    "Rain": { "fire": 0.72, "lightning": 1.35, "frost": 1.2, "gale": 1.1 },
+    "Thunderstorm": { "fire": 0.65, "lightning": 1.5, "frost": 1.25, "gale": 1.25 },
+    "Ashfall": { "fire": 1.3, "lightning": 1.0, "frost": 0.8, "gale": 1.0 },
+    "Mist": { "fire": 0.9, "lightning": 1.1, "frost": 1.15, "gale": 1.0 },
+    "Clear": { "fire": 1.0, "lightning": 1.0, "frost": 1.0, "gale": 1.0 }
+  },
+  "biomeModifiers": {
+    "ember": { "fire": 1.25, "frost": 0.78 },
+    "aether": { "frost": 1.25, "fire": 0.88 },
+    "suncrest": { "frost": 1.15, "fire": 0.92 },
+    "verdant": { "gale": 1.15, "fire": 1.05 }
+  }
+}

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { CircleCollider } from '../entities/PhysicsWorld';
 import {
   applySnowAndMacroBreakup,
   createPineBoughTexture,
@@ -32,6 +33,7 @@ export class VegetationSystem {
   private readonly grassGeo: THREE.BufferGeometry;
   private lastCenterX = 99999;
   private lastCenterZ = 99999;
+  public readonly colliders: CircleCollider[] = [];
 
   constructor(
     maxTreeCount: number,
@@ -217,6 +219,7 @@ export class VegetationSystem {
     let tIdx = 0;
     let rIdx = 0;
     let gIdx = 0;
+    this.colliders.length = 0;
 
     const cell = 11;
     const halfSpan = 132;
@@ -247,6 +250,7 @@ export class VegetationSystem {
           dummy.updateMatrix();
           this.trunkMesh.setMatrixAt(tIdx, dummy.matrix);
           this.crownMesh.setMatrixAt(tIdx, dummy.matrix);
+          this.colliders.push({ x: wx, z: wz, radius: 0.42 * sc, height: 4.4 * sc });
 
           if (biome === 'ember') col.setHex(0x523f38);
           else if (season === 'Autumn') col.setHex(hash2(gx, gz) > 0.7 ? 0xb45309 : 0x3b6e3c);
@@ -262,6 +266,7 @@ export class VegetationSystem {
           dummy.scale.set(rScale * 1.15, rScale * 0.72, rScale);
           dummy.updateMatrix();
           this.rockMesh.setMatrixAt(rIdx, dummy.matrix);
+          this.colliders.push({ x: wx, z: wz, radius: 0.92 * rScale, height: 1.4 * rScale });
           rIdx++;
         } else if (s > 0.1 && s <= 0.32 && gIdx < maxGrass && slope < 0.45) {
           const gScale = 0.75 + hash2(gx, gz) * 0.6;

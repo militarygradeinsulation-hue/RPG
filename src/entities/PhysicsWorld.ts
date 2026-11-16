@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { groundHeightAt, WATER_LEVEL } from '../world/TerrainHeightfield';
+import physicsConfig from '../data/physics.json';
+import { computeTerrainSlope, groundHeightAt, WATER_LEVEL } from '../world/TerrainHeightfield';
 import { OceanWaveSampler } from '../world/ocean/OceanWaveSampler';
 import { ShipRuntime } from './ships/ShipPhysics';
 
@@ -7,6 +8,7 @@ export interface CircleCollider {
   x: number;
   z: number;
   radius: number;
+  height?: number;
 }
 
 export interface IceBridgePatch {
@@ -34,11 +36,14 @@ export interface PlayerPhysicsResult {
   isUnderwater: boolean;
   isClimbing: boolean;
   isOnShipId: string | null;
+  fallImpactHeight: number;
 }
 
 /**
- * Deterministic fixed-timestep player locomotion & collision solver:
- * - Overworld capsule sliding against static stone/building colliders & steep cliffs
+ * Deterministic fixed-timestep player locomotion & collision solver (Laws 1 & 2):
+ * - Uses data-driven tuning from /src/data/physics.json
+ * - Overworld capsule sliding against static stone/building/tree/boulder colliders & steep cliffs (>45 deg)
+ * - Surface wading & deep-snow friction/speed modifiers
  * - Ice bridge walkable elevation support over lakes/rivers
  * - Ship deck boarding & relative movement when walking on ships
  * - Swimming surface buoyancy & 3D underwater diving (Space rise, C dive)
@@ -60,6 +65,7 @@ export function stepPlayerPhysics(params: {
   diveHeld: boolean;
   activeDungeon: DungeonBounds | null;
   colliders: CircleCollider[];
+  extraColliders?: CircleCollider[];
   iceBridges: IceBridgePatch[];
   ships: ShipRuntime[];
   waveSampler: OceanWaveSampler;
@@ -74,6 +80,7 @@ export function stepPlayerPhysics(params: {
     diveHeld,
     activeDungeon,
     colliders,
+    extraColliders,
     iceBridges,
     ships,
     waveSampler,
@@ -83,13 +90,14 @@ export function stepPlayerPhysics(params: {
   let y = params.y;
   let z = params.z;
   let vy = params.vy;
+  const wasGrounded = params.isGrounded;
   let isGrounded = params.isGrounded;
   let isSwimming = false;
   let isUnderwater = false;
   let isOnShipId: string | null = null;
+  let fallImpactHeight = 0;
 
   if (params.isClimbing) {
-    // Climbing handled vertically along climb tower wall
     return {
       x,
       y,
@@ -102,11 +110,18 @@ export function stepPlayerPhysics(params: {
       isUnderwater: false,
       isClimbing: true,
       isOnShipId: null,
+      fallImpactHeight: 0,
     };
   }
 
-  let nextX = x + moveDirX * speed * dt;
-  let nextZ = z + moveDirZ * speed * dt;
+  // Surface speed modifier (wading in shallow water slows 25% per Section 2.5)
+  const currentBedY = activeDungeon ? 0 : groundHeightAt(x, z);
+  const wadingDepth = activeDungeon ? 0 : Math.max(0, WATER_LEVEL - currentBedY);
+  const surfaceMult = wadingDepth > 0.18 && wadingDepth < 0.72 ? physicsConfig.surfaceSpeedMultipliers.water : 1.0;
+
+  // Steep slope resistance (>45 deg slope gently slides player downhill per Section 2.1)
+  let nextX = x + moveDirX * speed * surfaceMult * dt;
+  let nextZ = z + moveDirZ * speed * surfaceMult * dt;
 
   if (activeDungeon) {
     nextX = THREE.MathUtils.clamp(nextX, activeDungeon.minX, activeDungeon.maxX);
@@ -114,9 +129,13 @@ export function stepPlayerPhysics(params: {
     x = nextX;
     z = nextZ;
 
-    vy -= 22.0 * dt;
+    vy -= physicsConfig.gravityMps2 * 2.15 * dt;
+    const preLandingVy = vy;
     y += vy * dt;
     if (y <= 0.05) {
+      if (!wasGrounded && preLandingVy < -9.5) {
+        fallImpactHeight = (preLandingVy * preLandingVy) / (2 * physicsConfig.gravityMps2 * 2.15);
+      }
       y = 0.05;
       vy = 0;
       isGrounded = true;
@@ -133,20 +152,30 @@ export function stepPlayerPhysics(params: {
       isUnderwater: false,
       isClimbing: false,
       isOnShipId: null,
+      fallImpactHeight,
     };
   }
 
-  // Overworld horizontal cylinder collider sliding
-  for (let i = 0; i < colliders.length; i++) {
-    const c = colliders[i];
-    const dx = nextX - c.x;
-    const dz = nextZ - c.z;
-    const dist = Math.hypot(dx, dz);
-    if (dist < c.radius + 0.52 && dist > 0.001) {
-      const push = (c.radius + 0.52 - dist) / dist;
-      nextX += dx * push;
-      nextZ += dz * push;
+  // Push out from static colliders & nearby tree/boulder colliders (Law 1: zero clipping)
+  const resolveCirclePush = (list: CircleCollider[]) => {
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i];
+      const dx = nextX - c.x;
+      const dz = nextZ - c.z;
+      const distSq = dx * dx + dz * dz;
+      const minR = c.radius + 0.52;
+      if (distSq < minR * minR && distSq > 0.00001) {
+        if (c.height !== undefined && y > groundHeightAt(c.x, c.z) + c.height) continue;
+        const dist = Math.sqrt(distSq);
+        const push = (minR - dist) / dist;
+        nextX += dx * push;
+        nextZ += dz * push;
+      }
     }
+  };
+  resolveCirclePush(colliders);
+  if (extraColliders && extraColliders.length > 0) {
+    resolveCirclePush(extraColliders);
   }
 
   // Check if player stands on a floating ship deck
@@ -157,7 +186,6 @@ export function stepPlayerPhysics(params: {
     const dz = nextZ - s.z;
     const cosH = Math.cos(s.heading);
     const sinH = Math.sin(s.heading);
-    // Project into ship local deck coordinates
     const localX = dx * cosH - dz * sinH;
     const localZ = dx * sinH + dz * cosH;
     if (Math.abs(localX) <= s.parts.deckWidth * 0.55 && Math.abs(localZ) <= s.parts.deckLength * 0.52) {
@@ -191,12 +219,19 @@ export function stepPlayerPhysics(params: {
   const bedY = groundHeightAt(nextX, nextZ);
   const floorY = Math.max(bedY, deckHeight, pierHeight, iceHeight);
 
-  // Wave surface at player position
+  // Slope check (max walkable slope ~45 deg -> slope > 1.0 slides back if moving uphill)
+  if (isGrounded && deckHeight < -900 && pierHeight < -900 && iceHeight < -900) {
+    const slope = computeTerrainSlope(nextX, nextZ);
+    if (slope > 1.05 && bedY > groundHeightAt(x, z)) {
+      nextX = THREE.MathUtils.lerp(nextX, x, 0.72);
+      nextZ = THREE.MathUtils.lerp(nextZ, z, 0.72);
+    }
+  }
+
   const waterDepth = Math.max(0, WATER_LEVEL - bedY);
   const waveY =
     WATER_LEVEL + waveSampler.sampleHeight(nextX, nextZ, elapsed, THREE.MathUtils.clamp(waterDepth / 2.2, 0.14, 1.0));
 
-  // Enter swim/dive mode when floor is submerged > 0.72m and player is not standing on pier/ship/ice
   const onDryStructure = deckHeight > -900 || pierHeight > -900 || iceHeight > -900;
   if (!onDryStructure && floorY < waveY - 0.72 && y < waveY + 0.45) {
     isSwimming = true;
@@ -206,13 +241,11 @@ export function stepPlayerPhysics(params: {
     } else if (ascendHeld) {
       vy = THREE.MathUtils.lerp(vy, 4.8, Math.min(1, dt * 7));
     } else {
-      // Gentle buoyancy restoring toward surface when not diving deeply
       const diff = swimSurfaceY - y;
       vy = THREE.MathUtils.lerp(vy, THREE.MathUtils.clamp(diff * 4.5, -2.5, 4.0), Math.min(1, dt * 5));
     }
     y += vy * dt;
     if (y > waveY - 0.35 && ascendHeld) {
-      // Swim-hop out onto nearby shore / ship
       vy = 5.4;
     }
     if (y < bedY + 0.25) {
@@ -222,9 +255,13 @@ export function stepPlayerPhysics(params: {
     isUnderwater = y < waveY - 1.35;
     isGrounded = false;
   } else {
-    vy -= 22.0 * dt;
+    vy -= physicsConfig.gravityMps2 * 2.15 * dt;
+    const preLandingVy = vy;
     y += vy * dt;
     if (y <= floorY + 0.04) {
+      if (!wasGrounded && preLandingVy < -9.0) {
+        fallImpactHeight = (preLandingVy * preLandingVy) / (2 * physicsConfig.gravityMps2 * 2.15);
+      }
       y = floorY;
       vy = 0;
       isGrounded = true;
@@ -237,13 +274,101 @@ export function stepPlayerPhysics(params: {
     x: nextX,
     y,
     z: nextZ,
-    vx: moveDirX * speed,
-    vz: moveDirZ * speed,
+    vx: moveDirX * speed * surfaceMult,
+    vz: moveDirZ * speed * surfaceMult,
     vy,
     isGrounded,
     isSwimming,
     isUnderwater,
     isClimbing: false,
     isOnShipId,
+    fallImpactHeight,
   };
+}
+
+/**
+ * Law 1 Camera Sphere Collider sweep:
+ * Prevents the camera from ever clipping inside walls, pillars, boulders, trees, or terrain.
+ */
+export function resolveCameraCollision(params: {
+  targetWorldX: number;
+  targetWorldY: number;
+  targetWorldZ: number;
+  desiredWorldX: number;
+  desiredWorldY: number;
+  desiredWorldZ: number;
+  activeDungeon: DungeonBounds | null;
+  colliders: CircleCollider[];
+  extraColliders?: CircleCollider[];
+}): { x: number; y: number; z: number } {
+  const {
+    targetWorldX,
+    targetWorldY,
+    targetWorldZ,
+    desiredWorldX,
+    desiredWorldY,
+    desiredWorldZ,
+    activeDungeon,
+    colliders,
+    extraColliders,
+  } = params;
+
+  const camRadius = physicsConfig.cameraSphereRadiusM;
+  let maxT = 1.0;
+
+  // Sweep 6 samples along the boom ray against static colliders + dungeon bounds
+  const dx = desiredWorldX - targetWorldX;
+  const dy = desiredWorldY - targetWorldY;
+  const dz = desiredWorldZ - targetWorldZ;
+
+  const testColliderList = (list: CircleCollider[], t: number) => {
+    const sx = targetWorldX + dx * t;
+    const sy = targetWorldY + dy * t;
+    const sz = targetWorldZ + dz * t;
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i];
+      const rSum = c.radius + camRadius;
+      const ox = sx - c.x;
+      const oz = sz - c.z;
+      if (ox * ox + oz * oz < rSum * rSum) {
+        const baseH = activeDungeon ? 0 : groundHeightAt(c.x, c.z);
+        const topH = baseH + (c.height ?? 5.5);
+        if (sy <= topH + camRadius) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  const steps = 8;
+  for (let s = 1; s <= steps; s++) {
+    const t = s / steps;
+    const sx = targetWorldX + dx * t;
+    const sz = targetWorldZ + dz * t;
+    if (activeDungeon) {
+      if (
+        sx <= activeDungeon.minX + camRadius ||
+        sx >= activeDungeon.maxX - camRadius ||
+        sz <= activeDungeon.minZ + camRadius ||
+        sz >= activeDungeon.maxZ - camRadius
+      ) {
+        maxT = Math.max(0.22, (s - 1) / steps);
+        break;
+      }
+    } else if (testColliderList(colliders, t) || (extraColliders && testColliderList(extraColliders, t))) {
+      maxT = Math.max(0.22, (s - 1) / steps);
+      break;
+    }
+  }
+
+  const finalX = targetWorldX + dx * maxT;
+  const finalZ = targetWorldZ + dz * maxT;
+  let finalY = targetWorldY + dy * maxT;
+  if (!activeDungeon) {
+    finalY = Math.max(finalY, groundHeightAt(finalX, finalZ) + 0.65);
+  } else {
+    finalY = THREE.MathUtils.clamp(finalY, 0.7, 7.6);
+  }
+  return { x: finalX, y: finalY, z: finalZ };
 }

@@ -287,6 +287,13 @@ export interface DungeonZoneInfo {
   cleared: boolean;
 }
 
+export interface SceneMusicSignals {
+  inCombat: boolean;
+  nearDragon: boolean;
+  nearSeal: boolean;
+  nearSettlementOrNpc: boolean;
+}
+
 export interface AccessibilitySettings {
   theme: AccessibilityTheme;
   textScale: '100' | '115' | '130';

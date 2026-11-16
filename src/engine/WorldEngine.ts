@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { CSM } from 'three/addons/csm/CSM.js';
 import { soundEngine } from '../audio/soundEngine';
+import physicsConfig from '../data/physics.json';
+import elementReactions from '../data/element_reactions.json';
 import { FloatingOrigin } from '../core/FloatingOrigin';
 import { FixedStepLoop } from '../core/GameLoop';
 import { InputManager } from '../core/InputManager';
@@ -8,7 +10,7 @@ import { WorldClock } from '../core/WorldClock';
 import { SeaLifeSystem } from '../entities/sealife/SeaLifeSystem';
 import { createShipModel, SHIP_SPECS } from '../entities/ships/ShipBuilder';
 import { CannonballRuntime, ShipRuntime, stepShipBuoyancyAndPhysics } from '../entities/ships/ShipPhysics';
-import { CircleCollider, IceBridgePatch, stepPlayerPhysics } from '../entities/PhysicsWorld';
+import { CircleCollider, IceBridgePatch, resolveCameraCollision, stepPlayerPhysics } from '../entities/PhysicsWorld';
 import {
   createPhotorealTerrainMaterial,
   createProceduralNightEquirectEnv,
@@ -38,6 +40,7 @@ import {
   PerfTelemetry,
   PlayerState,
   ResolvedGraphicsTier,
+  SceneMusicSignals,
   SealShrineState,
   SeasonType,
   ShipHudState,
@@ -211,6 +214,7 @@ export interface WorldCallbacks {
     telemetry: PerfTelemetry;
     shipHud: ShipHudState | null;
     diveHud: DiveHudState;
+    sceneMusicSignals: SceneMusicSignals;
   }) => void;
 }
 
@@ -338,6 +342,7 @@ export class WorldEngine {
   private dodgeDirX = 0;
   private dodgeDirZ = 0;
   private parryWindowTimer = 0;
+  private recentCombatTimer = 0;
   private hitstopTimer = 0;
   private screenShake = 0;
   private walkPhase = 0;
@@ -569,6 +574,7 @@ export class WorldEngine {
     this.harborAnchors = arch.harborAnchors;
     this.lighthouseBeams = arch.lighthouseBeams;
     this.campfires = arch.campfires;
+    this.colliders.push(...arch.staticColliders);
 
     // 5. Sea Wrecks & Marine Life
     this.seaWrecks.push(...generateSeaWrecks());
@@ -1371,6 +1377,7 @@ export class WorldEngine {
     });
 
     if (hitAny) {
+      this.recentCombatTimer = 6.5;
       this.hitstopTimer = Math.max(this.hitstopTimer, 0.045);
       const manaGain = this.unlockedSkills.includes('gale_tempest') ? 14 : 6;
       this.playerState.mana = Math.min(this.playerState.maxMana, this.playerState.mana + manaGain);
@@ -1397,6 +1404,7 @@ export class WorldEngine {
     this.attackSwingTimer = 0.32;
     this.playerSquashY = 1.18;
     this.screenShake = 0.22;
+    this.recentCombatTimer = 6.5;
     soundEngine.triggerCue(element);
 
     const px = this.playerState.x;
@@ -1414,6 +1422,10 @@ export class WorldEngine {
     this.particlePool.spawnBurst(lx, py + 1.2, lz, spellColors[element], 20);
 
     let dmg = 34 + this.playerState.level * 5;
+    const weatherModMap = elementReactions.weatherModifiers[this.weather] as Record<string, number> | undefined;
+    if (weatherModMap && typeof weatherModMap[element] === 'number') {
+      dmg *= weatherModMap[element];
+    }
     if (element === 'fire' && this.unlockedSkills.includes('fire_kindle')) dmg *= 1.25;
     if (element === 'lightning' && this.unlockedSkills.includes('lightning_arc')) dmg *= 1.25;
     if (element === 'frost' && this.unlockedSkills.includes('frost_rime')) dmg *= 1.25;
@@ -1443,6 +1455,15 @@ export class WorldEngine {
           this.callbacks.onCombatLog('Tempest Arc electrified wet ground! (+35% Shock)', 'combo');
         }
       } else if (element === 'frost') {
+        // Law 4: Frost puts out burning fires nearby
+        this.brushPatches.forEach((bp) => {
+          if (bp.burningTimer > 0 && Math.hypot(bp.x - px, bp.z - pz) < 10.5) {
+            bp.burningTimer = 0;
+            (bp.mesh.material as THREE.MeshStandardMaterial).emissive.setHex(0x000000);
+            (bp.mesh.material as THREE.MeshStandardMaterial).emissiveIntensity = 0;
+            this.callbacks.onCombatLog('Glacial Surge extinguished nearby flames!', 'world');
+          }
+        });
         const fx = px + Math.sin(this.playerModel.group.rotation.y) * 4.5;
         const fz = pz + Math.cos(this.playerModel.group.rotation.y) * 4.5;
         if (isWaterAt(fx, fz) || isWaterAt(px, pz)) {
@@ -1737,16 +1758,22 @@ export class WorldEngine {
 
     if (element !== 'physical') {
       const p = enemy.primedElement;
-      if ((p === 'fire' && element === 'frost') || (p === 'frost' && element === 'fire')) {
-        dmg *= 2.2;
-        comboName = 'THERMAL SHATTER!';
-      } else if ((p === 'lightning' && element === 'frost') || (p === 'frost' && element === 'lightning')) {
-        dmg *= 1.85;
-        enemy.stunTimer = 2.6;
-        comboName = 'SUPERCONDUCT SHATTER!';
-      } else if ((p === 'fire' && element === 'gale') || (p === 'gale' && element === 'fire')) {
-        dmg *= 1.95;
-        comboName = 'INFERNO VORTEX!';
+      if (!this.activeDungeon && element === 'lightning' && isWaterAt(enemy.x, enemy.z)) {
+        const arcFlood = elementReactions.reactions.find((r) => r.id === 'lightning_water');
+        dmg *= arcFlood?.damageMultiplier ?? 2.0;
+        enemy.stunTimer = Math.max(enemy.stunTimer, arcFlood?.stunSeconds ?? 1.2);
+        comboName = arcFlood?.name ?? 'ARC FLOOD!';
+      } else if (p && p !== element) {
+        const match = elementReactions.reactions.find(
+          (r) => r.elements.includes(p) && r.elements.includes(element)
+        );
+        if (match) {
+          dmg *= match.damageMultiplier;
+          if (match.stunSeconds > 0) {
+            enemy.stunTimer = Math.max(enemy.stunTimer, match.stunSeconds);
+          }
+          comboName = match.name;
+        }
       }
       if (comboName) {
         if (this.unlockedSkills.includes('fire_solar')) dmg *= 1.3;
@@ -1868,6 +1895,7 @@ export class WorldEngine {
     if (this.attackSwingTimer > 0) this.attackSwingTimer -= dt;
     if (this.dodgeTimer > 0) this.dodgeTimer -= dt;
     if (this.oxygenWarnCooldown > 0) this.oxygenWarnCooldown -= dt;
+    if (this.recentCombatTimer > 0) this.recentCombatTimer -= dt;
 
     // Ambient Mana/Stamina regeneration
     this.playerState.mana = Math.min(this.playerState.maxMana, this.playerState.mana + dt * 4.2);
@@ -2166,6 +2194,7 @@ export class WorldEngine {
       diveHeld: Boolean(keys['KeyC']),
       activeDungeon: this.activeDungeon ? { minX: -18.5, maxX: 18.5, minZ: -44.5, maxZ: 13.0 } : null,
       colliders: this.colliders,
+      extraColliders: this.activeDungeon ? undefined : this.vegetation.colliders,
       iceBridges: this.iceBridges,
       ships: this.ships,
       waveSampler: this.waveSampler,
@@ -2180,6 +2209,18 @@ export class WorldEngine {
     this.isUnderwater = res.isUnderwater;
     this.playerState.isSwimming = res.isSwimming;
     this.playerState.isCrouching = this.isCrouching;
+
+    // Law 2: Fall damage scaled by impact drop height above physicsConfig.safeFallHeightM (4m)
+    if (res.fallImpactHeight > physicsConfig.safeFallHeightM && !res.isSwimming) {
+      const excess = res.fallImpactHeight - physicsConfig.safeFallHeightM;
+      const span = Math.max(1, physicsConfig.lethalFallHeightM - physicsConfig.safeFallHeightM);
+      const fallDmg = Math.max(6, Math.round((excess / span) * this.playerState.maxHp));
+      this.playerState.hp = Math.max(1, this.playerState.hp - fallDmg);
+      this.playerSquashY = 0.72;
+      this.screenShake = Math.min(0.45, 0.14 + excess * 0.03);
+      soundEngine.triggerCue('damage_taken', `Fall Impact (-${fallDmg} HP)`);
+      this.callbacks.onCombatLog(`Hard landing from ${res.fallImpactHeight.toFixed(1)}m dealt ${fallDmg} fall damage!`, 'warning');
+    }
 
     // Oxygen / Breath handling while diving underwater
     if (this.isUnderwater) {
@@ -2377,6 +2418,7 @@ export class WorldEngine {
                 const rawHit = e.isDragon ? 18 : 11;
                 const mitigated = isBlocking ? Math.round(rawHit * 0.25) : rawHit;
                 this.playerState.hp = Math.max(1, this.playerState.hp - mitigated);
+                this.recentCombatTimer = 6.5;
                 soundEngine.triggerCue(isBlocking ? 'climb' : 'damage_taken', isBlocking ? 'Shield Blocked!' : 'Enemy Strike');
                 this.callbacks.onCombatLog(
                   isBlocking ? `Shield blocked ${e.name}'s blow (${mitigated} dmg)!` : `${e.name} struck you for ${mitigated} dmg!`,
@@ -2453,15 +2495,25 @@ export class WorldEngine {
     const horizDist = Math.cos(this.cameraPitch) * this.cameraDist;
     const desiredCamX = this.smoothCamTarget.x + Math.sin(this.cameraYaw) * horizDist;
     const desiredCamZ = this.smoothCamTarget.z + Math.cos(this.cameraYaw) * horizDist;
-    let desiredCamY = this.smoothCamTarget.y + Math.sin(this.cameraPitch) * this.cameraDist;
+    const desiredCamY = this.smoothCamTarget.y + Math.sin(this.cameraPitch) * this.cameraDist;
 
-    if (!this.activeDungeon) {
-      const camWorldX = desiredCamX + this.origin.originX;
-      const camWorldZ = desiredCamZ + this.origin.originZ;
-      const groundAtCam = groundHeightAt(camWorldX, camWorldZ);
-      desiredCamY = Math.max(desiredCamY, groundAtCam + 0.85);
-    }
-    this.smoothCamPos.lerp(new THREE.Vector3(desiredCamX, desiredCamY, desiredCamZ), Math.min(1, dt * 11));
+    const ox = this.activeDungeon ? 0 : this.origin.originX;
+    const oz = this.activeDungeon ? 0 : this.origin.originZ;
+    const resolvedCamWorld = resolveCameraCollision({
+      targetWorldX: this.smoothCamTarget.x + ox,
+      targetWorldY: this.smoothCamTarget.y,
+      targetWorldZ: this.smoothCamTarget.z + oz,
+      desiredWorldX: desiredCamX + ox,
+      desiredWorldY: desiredCamY,
+      desiredWorldZ: desiredCamZ + oz,
+      activeDungeon: this.activeDungeon ? { minX: -18.5, maxX: 18.5, minZ: -44.5, maxZ: 13.0 } : null,
+      colliders: this.colliders,
+      extraColliders: this.activeDungeon ? undefined : this.vegetation.colliders,
+    });
+    this.smoothCamPos.lerp(
+      new THREE.Vector3(resolvedCamWorld.x - ox, resolvedCamWorld.y, resolvedCamWorld.z - oz),
+      Math.min(1, dt * 13)
+    );
 
     if (this.screenShake > 0) {
       this.screenShake = Math.max(0, this.screenShake - dt * 1.8);
@@ -2837,6 +2889,24 @@ export class WorldEngine {
           }
         : null;
 
+    const activeEnemyList = this.activeDungeon ? this.dungeonEnemies : this.enemies;
+    const nearDragon = activeEnemyList.some(
+      (e) => e.alive && e.isDragon && Math.hypot(e.x - this.playerState.x, e.z - this.playerState.z) < 46
+    );
+    const enemyAggroNear = activeEnemyList.some(
+      (e) => e.alive && Math.hypot(e.x - this.playerState.x, e.z - this.playerState.z) < (e.isDragon ? 32 : 21)
+    );
+    const inCombat = this.recentCombatTimer > 0 || enemyAggroNear;
+    const nearSeal =
+      !this.activeDungeon &&
+      (Math.hypot(this.playerState.x, this.playerState.z) < 20 ||
+        this.seals.some((s) => Math.hypot(s.x - this.playerState.x, s.z - this.playerState.z) < 24));
+    const nearSettlementOrNpc =
+      !this.activeDungeon &&
+      (this.npcs.some((n) => Math.hypot(n.x - this.playerState.x, n.z - this.playerState.z) < 24) ||
+        this.outposts.some((o) => Math.hypot(o.x - this.playerState.x, o.z - this.playerState.z) < 28) ||
+        this.harborAnchors.some((h) => Math.hypot(h.x - this.playerState.x, h.z - this.playerState.z) < 32));
+
     this.callbacks.onHudTick({
       currentBiome: this.currentBiome,
       timeOfDay: this.clockState.getTimeOfDayLabel(),
@@ -2868,6 +2938,12 @@ export class WorldEngine {
         oxygen: Math.round(this.oxygen),
         maxOxygen: this.maxOxygen,
         depthMeters: Math.max(0, Number((WATER_LEVEL - this.playerState.y).toFixed(1))),
+      },
+      sceneMusicSignals: {
+        inCombat,
+        nearDragon,
+        nearSeal,
+        nearSettlementOrNpc,
       },
     });
   }

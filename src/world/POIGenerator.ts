@@ -4,6 +4,7 @@ import {
   PBRTextureSet,
   SnowShaderUniforms,
 } from '../render/MaterialLibrary';
+import { CircleCollider } from '../entities/PhysicsWorld';
 import { groundHeightAt, WATER_LEVEL } from './TerrainHeightfield';
 import { WORLD_POIS } from './ocean/ArchipelagoGen';
 
@@ -29,11 +30,13 @@ export function buildWorldArchitectureAndHarbors(
   harborAnchors: HarborDockAnchor[];
   lighthouseBeams: THREE.Group[];
   campfires: { x: number; y: number; z: number }[];
+  staticColliders: CircleCollider[];
 } {
   const group = new THREE.Group();
   const harborAnchors: HarborDockAnchor[] = [];
   const lighthouseBeams: THREE.Group[] = [];
   const campfires: { x: number; y: number; z: number }[] = [];
+  const staticColliders: CircleCollider[] = [];
 
   const stoneMat = new THREE.MeshStandardMaterial({
     map: stonePbr.map,
@@ -98,6 +101,12 @@ export function buildWorldArchitectureAndHarbors(
 
     house.add(stonePlinth, walls, roof, chimney, doorGlow);
     group.add(house);
+    staticColliders.push({
+      x,
+      z,
+      radius: Math.max(w, d) * 0.56,
+      height: 0.9 + h + 2.0,
+    });
   };
 
   // Build Towns: Riverbend Market, Ironbound Forge, Skyreach Monastery gates, and Citadel Bastion Gate
@@ -216,6 +225,7 @@ export function buildWorldArchitectureAndHarbors(
     lh.add(tower, gallery, beaconRoom, cap, beamPivot);
     group.add(lh);
     lighthouseBeams.push(beamPivot);
+    staticColliders.push({ x: lp.x, z: lp.z, radius: 2.35, height: 16.5 });
   });
 
   // Crossroads Wooden Signposts
@@ -234,7 +244,8 @@ export function buildWorldArchitectureAndHarbors(
     arm2.position.set(sp.x - 0.3, sy + 1.9, sp.z);
     arm2.rotation.y = -sp.rot;
     group.add(post, arm1, arm2);
+    staticColliders.push({ x: sp.x, z: sp.z, radius: 0.35, height: 2.6 });
   });
 
-  return { group, harborAnchors, lighthouseBeams, campfires };
+  return { group, harborAnchors, lighthouseBeams, campfires, staticColliders };
 }

@@ -105,6 +105,7 @@ import {
   PlayerState,
   QuestChoice,
   QuestState,
+  SceneMusicSignals,
   SealShrineState,
   SeasonType,
   ShipHudState,
@@ -280,6 +281,12 @@ export default function App() {
   ]);
   const [visualCue, setVisualCue] = useState<VisualCueEvent | null>(null);
   const [musicState, setMusicState] = useState<MusicPlaybackState>(() => soundEngine.getMusicState());
+  const [sceneSignals, setSceneSignals] = useState<SceneMusicSignals>({
+    inCombat: false,
+    nearDragon: false,
+    nearSeal: false,
+    nearSettlementOrNpc: false,
+  });
   const [srAnnouncement, setSrAnnouncement] = useState('');
   const [photos, setPhotos] = useState<PhotoSnapshot[]>(() => loadSavedPhotos());
   const [accessibility, setAccessibility] = useState<AccessibilitySettings>(() => loadAccessibilitySettings());
@@ -414,17 +421,42 @@ export default function App() {
     };
   }, []);
 
-  // Adaptive Soundtrack Context (crossfades cleanly between all 6 uploaded MP3 scores)
+  // Adaptive Soundtrack Context (matches all 6 uploaded MP3 scores to live scene activity)
   useEffect(() => {
     soundEngine.setMusicContext({
       gameMode,
       biome: currentBiome,
+      timeOfDay: timeOfDayLabel,
+      weather,
       inDungeon: Boolean(activeDungeon),
       isSailing: Boolean(shipHud?.atHelm),
+      isUnderwater: diveHud.isUnderwater,
+      isSwimming: diveHud.isSwimming,
       isStealth: Boolean(player.isCrouching),
-      isCraftingOrTown: activeModal === 'craft' || activeModal === 'shipyard' || activeModal === 'outposts',
+      inCombat: sceneSignals.inCombat,
+      nearDragon: sceneSignals.nearDragon,
+      nearSeal: sceneSignals.nearSeal,
+      nearSettlementOrNpc: sceneSignals.nearSettlementOrNpc,
+      isCraftingOrTown:
+        Boolean(activeNpcId) || activeModal === 'craft' || activeModal === 'shipyard' || activeModal === 'outposts',
     });
-  }, [gameMode, currentBiome, activeDungeon, shipHud?.atHelm, player.isCrouching, activeModal]);
+  }, [
+    gameMode,
+    currentBiome,
+    timeOfDayLabel,
+    weather,
+    activeDungeon,
+    shipHud?.atHelm,
+    diveHud.isUnderwater,
+    diveHud.isSwimming,
+    player.isCrouching,
+    sceneSignals.inCombat,
+    sceneSignals.nearDragon,
+    sceneSignals.nearSeal,
+    sceneSignals.nearSettlementOrNpc,
+    activeNpcId,
+    activeModal,
+  ]);
 
   // Auth & Firestore connection check
   useEffect(() => {
@@ -508,6 +540,14 @@ export default function App() {
           setTelemetry(info.telemetry);
           setShipHud(info.shipHud);
           setDiveHud(info.diveHud);
+          setSceneSignals((prev) =>
+            prev.inCombat === info.sceneMusicSignals.inCombat &&
+            prev.nearDragon === info.sceneMusicSignals.nearDragon &&
+            prev.nearSeal === info.sceneMusicSignals.nearSeal &&
+            prev.nearSettlementOrNpc === info.sceneMusicSignals.nearSettlementOrNpc
+              ? prev
+              : info.sceneMusicSignals
+          );
         },
       }
     );
@@ -1316,15 +1356,18 @@ export default function App() {
 
         {/* Compact Now-Playing Soundtrack Bar */}
         {!hudCollapsed && (
-          <div className="hud-panel rounded-lg px-2.5 py-1.5 text-[11px] flex items-center gap-1.5 shadow-lg max-w-[210px]">
+          <div className="hud-panel rounded-lg px-2.5 py-1.5 text-[11px] flex items-center gap-1.5 shadow-lg w-[216px]">
             <button
               type="button"
               onClick={() => setActiveModal('music')}
               className="flex items-center gap-1.5 min-w-0 text-left hover:text-amber-200 transition-colors"
-              title="Open Bardic Soundtrack Studio"
+              title={`Scene: ${musicState.sceneLabel} — Click to open Soundtrack Studio`}
             >
               <Music className="w-3.5 h-3.5 text-amber-300 shrink-0" />
-              <span className="truncate text-slate-200 font-medium">{musicState.currentTrack.title}</span>
+              <div className="min-w-0">
+                <div className="truncate text-slate-200 font-medium leading-tight">{musicState.currentTrack.title}</div>
+                <div className="truncate text-[9px] text-amber-300/80 leading-tight">{musicState.sceneLabel}</div>
+              </div>
             </button>
             <div className="flex items-center gap-0.5 shrink-0 ml-auto">
               <button

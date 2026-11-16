@@ -158,7 +158,7 @@ export const SoundtrackModal: React.FC<SoundtrackModalProps> = ({
                 </div>
                 <div>
                   <div className="text-xs uppercase tracking-wider text-amber-300/80 font-semibold">
-                    {musicState.autoAdaptive ? 'Adaptive Realm Score' : 'Manual Track Selection'}
+                    {musicState.autoAdaptive ? `Adaptive Scene: ${musicState.sceneLabel}` : `Manual Track · Scene: ${musicState.sceneLabel}`}
                   </div>
                   <div className="text-sm font-bold text-white">{musicState.currentTrack.title}</div>
                   <div className="text-[11px] text-slate-400">

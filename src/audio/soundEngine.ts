@@ -1,5 +1,5 @@
 import { WeatherType } from '../types/game';
-import { MUSIC_TRACKS, MusicContextInput, MusicTrackInfo, selectContextTrackId } from './musicCatalog';
+import { MUSIC_TRACKS, MusicContextInput, MusicTrackInfo, selectMusicScene } from './musicCatalog';
 
 export type SoundCueType =
   | 'melee'
@@ -24,6 +24,7 @@ export interface VisualCueEvent {
 
 export interface MusicPlaybackState {
   currentTrack: MusicTrackInfo;
+  sceneLabel: string;
   isPlaying: boolean;
   isMuted: boolean;
   autoAdaptive: boolean;
@@ -67,12 +68,15 @@ class ModularAudioEngine {
   private fadeTimer: number | null = null;
   private currentTrackId: string = 'cinematic_adventure';
   private desiredAutoTrackId: string = 'cinematic_adventure';
+  private currentSceneLabel: string = 'Title Overture';
+  private lastAutoSwitchMs = 0;
   private autoAdaptive = true;
   private musicEnabled = true;
   private isMuted = false;
   private musicListeners = new Set<(state: MusicPlaybackState) => void>();
   private gestureUnlocked = false;
   private pausedDucked = false;
+  private underwaterMuffled = false;
 
   constructor() {
     this.bindGlobalUnlockListeners();
@@ -106,6 +110,7 @@ class ModularAudioEngine {
     const track = MUSIC_TRACKS.find((t) => t.id === this.currentTrackId) || MUSIC_TRACKS[0];
     return {
       currentTrack: track,
+      sceneLabel: this.currentSceneLabel,
       isPlaying: Boolean(this.activeDeck && !this.activeDeck.paused && this.musicEnabled && !this.isMuted),
       isMuted: this.isMuted,
       autoAdaptive: this.autoAdaptive,
@@ -157,7 +162,8 @@ class ModularAudioEngine {
     const track = MUSIC_TRACKS.find((t) => t.id === trackId);
     const trim = track?.defaultVolumeTrim ?? 0.88;
     const pauseFactor = this.pausedDucked ? 0.45 : 1.0;
-    return Math.max(0, Math.min(1, this.masterVol * this.musicVol * trim * pauseFactor));
+    const waterFactor = this.underwaterMuffled ? 0.68 : 1.0;
+    return Math.max(0, Math.min(1, this.masterVol * this.musicVol * trim * pauseFactor * waterFactor));
   }
 
   private applyDeckVolumes() {
@@ -174,7 +180,6 @@ class ModularAudioEngine {
         Math.min(1, this.getEffectiveMusicVolume(fadeTrackId) * this.fadingDeckGain)
       );
     }
-    // Keep synthetic ambient drone muted while real MP3 soundtrack is actively playing
     if (this.droneGain && this.ctx) {
       const musicPlaying = Boolean(this.activeDeck && !this.activeDeck.paused && this.musicEnabled && !this.isMuted && this.musicVol > 0.05);
       this.droneGain.gain.setTargetAtTime(musicPlaying ? 0.04 : 0.42, this.ctx.currentTime, 0.35);
@@ -191,7 +196,6 @@ class ModularAudioEngine {
       return;
     }
 
-    // If same track is already loaded in activeDeck, ensure it plays
     if (this.activeDeck && this.activeDeck.dataset.trackId === track.id) {
       if (this.activeDeck.paused && this.gestureUnlocked) {
         void this.activeDeck
@@ -210,7 +214,6 @@ class ModularAudioEngine {
       return;
     }
 
-    // Move current active deck to fadingDeck (cleanly stop any older fading deck)
     if (this.fadeTimer !== null) {
       window.clearInterval(this.fadeTimer);
       this.fadeTimer = null;
@@ -251,7 +254,7 @@ class ModularAudioEngine {
           this.emitMusicState();
           return;
         }
-        const steps = 28;
+        const steps = 26;
         let step = 0;
         this.fadeTimer = window.setInterval(() => {
           step++;
@@ -284,11 +287,24 @@ class ModularAudioEngine {
 
   public setMusicContext(ctx: MusicContextInput) {
     this.pausedDucked = ctx.gameMode === 'paused';
-    this.desiredAutoTrackId = selectContextTrackId(ctx);
+    const decision = selectMusicScene(ctx);
+    this.underwaterMuffled = decision.underwaterMuffled;
+    this.desiredAutoTrackId = decision.trackId;
+    const sceneChanged = this.currentSceneLabel !== decision.sceneLabel;
+    this.currentSceneLabel = decision.sceneLabel;
     this.applyDeckVolumes();
 
     if (this.autoAdaptive && this.desiredAutoTrackId !== this.currentTrackId) {
-      this.startOrCrossfadeTrack(this.desiredAutoTrackId);
+      const now = Date.now();
+      const cooldownMs = decision.urgent ? 400 : 2400;
+      if (now - this.lastAutoSwitchMs >= cooldownMs) {
+        this.lastAutoSwitchMs = now;
+        this.startOrCrossfadeTrack(this.desiredAutoTrackId);
+        return;
+      }
+    }
+    if (sceneChanged) {
+      this.emitMusicState();
     }
   }
 
