@@ -202,6 +202,7 @@ export interface WorldCallbacks {
   onHarvestItem: (itemId: string, qty: number, biomeId: BiomeId) => void;
   onEnemyDefeated: (kind: 'wraith' | 'golem' | 'stalker', biomeId: BiomeId) => void;
   onBiomeDiscover: (biomeId: BiomeId) => void;
+  onPoiDiscover: (poiId: string, name: string) => void;
   onInteractPrompt: (prompts: NearbyPrompt[]) => void;
   onTriggerInteract: (target: { kind: NearbyPrompt['kind']; id: string }) => void;
   onHudTick: (info: {
@@ -287,6 +288,7 @@ export class WorldEngine {
   private currentBiome: BiomeId = 'suncrest';
   private readonly discoveredBiomes = new Set<BiomeId>(['suncrest']);
   private readonly discoveredPois = new Set<string>(['poi_suncrest']);
+  private lastPoiScan = -1;
 
   // Entities & Props
   private playerModel!: ArticulatedPlayer;
@@ -2203,6 +2205,22 @@ export class WorldEngine {
       );
       this.seaLife.update(dt, elapsed, this.origin.originX, this.origin.originZ, this.waveSampler);
 
+      // Regional story discovery is proximity based and throttled to avoid
+      // scanning landmarks every physics tick. The quest journal persists
+      // the actual outcome so crossing a location twice never duplicates XP.
+      if (elapsed - this.lastPoiScan >= 0.35) {
+        this.lastPoiScan = elapsed;
+        for (const poi of WORLD_POIS) {
+          if (this.discoveredPois.has(poi.id)) continue;
+          const dx = this.playerState.x - poi.x;
+          const dz = this.playerState.z - poi.z;
+          if (dx * dx + dz * dz <= 22 * 22) {
+            this.discoveredPois.add(poi.id);
+            this.callbacks.onPoiDiscover(poi.id, poi.name);
+          }
+        }
+      }
+
       const nowBiome = getBiomeAt(this.playerState.x, this.playerState.z);
       if (nowBiome !== this.currentBiome) {
         this.currentBiome = nowBiome;
@@ -3106,6 +3124,16 @@ export class WorldEngine {
             z: poi.z,
             distance: Math.round(Math.hypot(poi.x - this.playerState.x, poi.z - this.playerState.z)),
             color: '#60a5fa',
+          });
+        } else if (poi.kind === 'lighthouse' || poi.kind === 'wreck') {
+          compassMarkers.push({
+            id: poi.id,
+            kind: 'town',
+            label: poi.name,
+            x: poi.x,
+            z: poi.z,
+            distance: Math.round(Math.hypot(poi.x - this.playerState.x, poi.z - this.playerState.z)),
+            color: poi.kind === 'lighthouse' ? '#a78bfa' : '#f59e0b',
           });
         } else if (poi.kind === 'capital' || poi.kind === 'town') {
           compassMarkers.push({
