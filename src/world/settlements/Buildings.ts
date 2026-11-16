@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {
   CLOTH_COLORS,
+  CONE4,
   DOOR_COLORS,
   GeoBatch,
   MatKey,
@@ -34,6 +35,9 @@ export interface Collider2 {
   x: number;
   z: number;
   r: number;
+  h?: number;
+  cam?: boolean;
+  bIdx?: number;
 }
 
 export interface BuildingRecord {
@@ -383,17 +387,18 @@ export function buildHouse(main: GeoBatch, spec: HouseSpec, rand: Rand): Buildin
   }
 
   // --- colliders: perimeter walls with a gap at the door ---
+  const wallTopH = fh + H;
   const addWallColliders = (ax: number, az: number, bx: number, bz: number, gapU?: number, gapW = 0) => {
     const len = Math.hypot(bx - ax, bz - az);
-    const n = Math.ceil(len / 0.5);
+    const n = Math.max(1, Math.ceil(len / 0.85));
     for (let i = 0; i <= n; i++) {
       const t = i / n;
       const u = -len / 2 + t * len;
-      if (gapU !== undefined && Math.abs(u - gapU) < gapW / 2 + 0.15) continue;
+      if (gapU !== undefined && Math.abs(u - gapU) < gapW / 2 + 0.22) continue;
       const lx = ax + (bx - ax) * t;
       const lz = az + (bz - az) * t;
       const p = toSettle(lx, lz);
-      colliders.push({ x: p.x, z: p.z, r: 0.32 });
+      colliders.push({ x: p.x, z: p.z, r: 0.45, h: wallTopH, cam: true });
     }
   };
   const hw = w / 2 - 0.12;
@@ -402,7 +407,7 @@ export function buildHouse(main: GeoBatch, spec: HouseSpec, rand: Rand): Buildin
   else {
     for (const px of [-w / 2 + 0.2, -w / 6, w / 6, w / 2 - 0.2]) {
       const p = toSettle(px, hd);
-      colliders.push({ x: p.x, z: p.z, r: 0.3 });
+      colliders.push({ x: p.x, z: p.z, r: 0.3, h: wallTopH, cam: false });
     }
   }
   addWallColliders(-hw, -hd, hw, -hd);
@@ -461,8 +466,8 @@ function buildRoof(b: GeoBatch, spec: HouseSpec, rand: Rand, w: number, d: numbe
 
   if (spec.roof === 'hip') {
     const rise = Math.min(w, d) * rand.range(0.32, 0.45);
-    b.put(spec.roofMat, new THREE.ConeGeometry(1, 1, 4), 0, topY + rise / 2, 0, (w + oh * 2) / Math.SQRT2, rise, (d + oh * 2) / Math.SQRT2, roofC, 0, Math.PI / 4, 0);
-    if (spec.snow) b.put('snow', new THREE.ConeGeometry(1, 1, 4), 0, topY + rise / 2 + 0.1, 0, (w + oh * 2) / Math.SQRT2 * 0.92, rise * 0.95, (d + oh * 2) / Math.SQRT2 * 0.92, 0xffffff, 0, Math.PI / 4, 0);
+    b.put(spec.roofMat, CONE4, 0, topY + rise / 2, 0, (w + oh * 2) / Math.SQRT2, rise, (d + oh * 2) / Math.SQRT2, roofC, 0, Math.PI / 4, 0);
+    if (spec.snow) b.put('snow', CONE4, 0, topY + rise / 2 + 0.1, 0, (w + oh * 2) / Math.SQRT2 * 0.92, rise * 0.95, (d + oh * 2) / Math.SQRT2 * 0.92, 0xffffff, 0, Math.PI / 4, 0);
     return;
   }
 
@@ -510,7 +515,7 @@ function furnish(
   const dark = tint(0x5a4030, rand, 0.15);
   const col = (x: number, z: number, r: number) => {
     const p = toSettle(x, z);
-    colliders.push({ x: p.x, z: p.z, r });
+    colliders.push({ x: p.x, z: p.z, r, h: 1.25, cam: false });
   };
 
   const table = (x: number, z: number, len: number, ry = 0) => {
@@ -769,10 +774,16 @@ export function buildWallRing(b: GeoBatch, spec: WallRingSpec, rand: Rand, colli
         }
       }
       // colliders
-      const cs = Math.ceil(sl / (spec.palisade ? 0.6 : 1.2));
+      const cs = Math.max(1, Math.ceil(sl / (spec.palisade ? 0.95 : 1.4)));
       for (let k = 0; k <= cs; k++) {
         const t = (s0 + (k / cs) * sl) / len;
-        colliders.push({ x: a.x + (c.x - a.x) * t, z: a.z + (c.z - a.z) * t, r: spec.palisade ? 0.35 : spec.thickness * 0.55 });
+        colliders.push({
+          x: a.x + (c.x - a.x) * t,
+          z: a.z + (c.z - a.z) * t,
+          r: spec.palisade ? 0.48 : spec.thickness * 0.58,
+          h: spec.height,
+          cam: !spec.palisade,
+        });
       }
     }
     if (isGate) {
@@ -796,7 +807,7 @@ export function buildWallRing(b: GeoBatch, spec: WallRingSpec, rand: Rand, colli
           for (const [ox, oz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) b.box('stone', 0.6, 0.8, 0.6, tx + ox * 1.1, gy + th + 0.1, tz + oz * 1.1, stoneC, 0, ang);
           b.box('cloth', 1.0, 2.6, 0.05, tx + Math.cos(ang) * 1.45, gy + th - 2.2, tz - Math.sin(ang) * 1.45, tint(spec.banner, rand), 0, ang + Math.PI / 2);
         }
-        colliders.push({ x: tx, z: tz, r: 1.5 });
+        colliders.push({ x: tx, z: tz, r: 1.5, h: th, cam: true });
       }
       if (!spec.palisade) {
         b.box('stone', gateW + 1, 1.6, spec.thickness + 0.4, mx, gy + 4.6, mz, stoneC, 0, ang);
@@ -813,7 +824,7 @@ export function buildWallRing(b: GeoBatch, spec: WallRingSpec, rand: Rand, colli
         for (const [ox, oz] of [[-0.8, -0.8], [0.8, -0.8], [-0.8, 0.8], [0.8, 0.8]]) b.cyl('wood', 0.18, th, a.x + ox, gy + th / 2, a.z + oz, woodC);
         b.box('wood', 2.1, 0.15, 2.1, a.x, gy + th - 1.1, a.z, woodC);
         b.cone(spec.roofMat, 1.7, 1.4, a.x, gy + th + 0.5, a.z, tint(0x9a7a5a, rand), 4, Math.PI / 4);
-        colliders.push({ x: a.x, z: a.z, r: 1.2 });
+        colliders.push({ x: a.x, z: a.z, r: 1.2, h: th, cam: true });
       }
     } else {
       const round = rand.chance(0.6);
@@ -838,7 +849,7 @@ export function buildWallRing(b: GeoBatch, spec: WallRingSpec, rand: Rand, colli
         const t2 = rand() * Math.PI * 2;
         b.box('glass', 0.15, 0.9, 0.1, a.x + Math.cos(t2) * (tr + 0.01), gy + 2 + k * (th / 3), a.z + Math.sin(t2) * (tr + 0.01), new THREE.Color(0.2, 0.2, 0.2), 0, -t2 + Math.PI / 2);
       }
-      colliders.push({ x: a.x, z: a.z, r: tr + 0.2 });
+      colliders.push({ x: a.x, z: a.z, r: tr + 0.2, h: th, cam: true });
     }
   }
 }

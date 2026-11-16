@@ -216,22 +216,32 @@ export class InputManager {
     const onPointerMove = (e: PointerEvent) => {
       if (!this.enabled || !this.callbacks.isPlaying()) return;
       if (document.pointerLockElement === this.dom) {
-        this.pendingYaw -= THREE.MathUtils.clamp(e.movementX, -120, 120) * 0.0032;
-        this.pendingPitch += THREE.MathUtils.clamp(e.movementY, -120, 120) * 0.0024;
+        this.pendingYaw -= THREE.MathUtils.clamp(e.movementX, -90, 90) * 0.0032;
+        this.pendingPitch += THREE.MathUtils.clamp(e.movementY, -90, 90) * 0.0024;
+        return;
+      }
+      if (e.pointerType === 'mouse' && e.buttons === 0) {
+        if (this.activePointers.has(e.pointerId) || this.rightMouseDown) {
+          this.rightMouseDown = false;
+          this.activePointers.delete(e.pointerId);
+          this.isDragging = this.activePointers.size > 0;
+          this.lastPinchDist = this.computePinchDist();
+        }
         return;
       }
       if (!this.isDragging || !this.activePointers.has(e.pointerId)) return;
 
       const prev = this.activePointers.get(e.pointerId)!;
-      const dx = e.clientX - prev.x;
-      const dy = e.clientY - prev.y;
+      const dx = THREE.MathUtils.clamp(e.clientX - prev.x, -85, 85);
+      const dy = THREE.MathUtils.clamp(e.clientY - prev.y, -85, 85);
       prev.x = e.clientX;
       prev.y = e.clientY;
 
       if (this.activePointers.size >= 2) {
         const pinch = this.computePinchDist();
         if (pinch !== null && this.lastPinchDist !== null) {
-          this.pendingZoom += (this.lastPinchDist - pinch) * 0.038;
+          const pinchDelta = THREE.MathUtils.clamp(this.lastPinchDist - pinch, -55, 55);
+          this.pendingZoom += pinchDelta * 0.038;
         }
         this.lastPinchDist = pinch;
         return;
@@ -261,7 +271,7 @@ export class InputManager {
     const onWheel = (e: WheelEvent) => {
       if (!this.enabled || !this.callbacks.isPlaying()) return;
       e.preventDefault();
-      this.pendingZoom += e.deltaY * 0.012;
+      this.pendingZoom += THREE.MathUtils.clamp(e.deltaY, -120, 120) * 0.012;
     };
 
     const onContextMenu = (e: MouseEvent) => {

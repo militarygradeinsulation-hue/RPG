@@ -34,6 +34,8 @@ export class VegetationSystem {
   private readonly grassGeo: THREE.BufferGeometry;
   private lastCenterX = 99999;
   private lastCenterZ = 99999;
+  private readonly dummy = new THREE.Object3D();
+  private readonly tempColor = new THREE.Color();
   public readonly colliders: CircleCollider[] = [];
 
   constructor(
@@ -108,6 +110,12 @@ export class VegetationSystem {
     });
     this.grassMesh = new THREE.InstancedMesh(this.grassGeo, grassMat, maxGrassCount);
     this.grassMesh.receiveShadow = true;
+
+    // Instances relocate dynamically around the player; prevent stale origin bounding spheres from culling forests on camera orbit.
+    this.trunkMesh.frustumCulled = false;
+    this.crownMesh.frustumCulled = false;
+    this.rockMesh.frustumCulled = false;
+    this.grassMesh.frustumCulled = false;
 
     this.group.add(this.trunkMesh, this.crownMesh, this.rockMesh, this.grassMesh);
   }
@@ -211,10 +219,11 @@ export class VegetationSystem {
     this.lastCenterX = snapX;
     this.lastCenterZ = snapZ;
 
-    const dummy = new THREE.Object3D();
-    const col = new THREE.Color();
-    const maxTrees = this.trunkMesh.count;
-    const maxGrass = this.grassMesh.count;
+    const dummy = this.dummy;
+    const col = this.tempColor;
+    const maxTrees = this.trunkMesh.instanceMatrix.count;
+    const maxRocks = this.rockMesh.instanceMatrix.count;
+    const maxGrass = this.grassMesh.instanceMatrix.count;
 
     // Seeded grid scatter so trees sit in consistent world coordinates even as player moves
     let tIdx = 0;
@@ -232,6 +241,8 @@ export class VegetationSystem {
     for (let gz = startGz; gz <= endGz; gz++) {
       for (let gx = startGx; gx <= endGx; gx++) {
         const s = hash2(gx * 1.13, gz * 2.71);
+        if (s <= 0.1 || (s > 0.32 && s <= 0.34) || (s > 0.44 && s <= 0.56)) continue;
+
         const wx = (gx + 0.15 + hash2(gx, gz * 4.1) * 0.7) * cell;
         const wz = (gz + 0.15 + hash2(gx * 3.7, gz) * 0.7) * cell;
         const distCenter = Math.hypot(wx, wz);
@@ -241,10 +252,11 @@ export class VegetationSystem {
 
         const y = groundHeightAt(wx, wz);
         if (y < WATER_LEVEL + 0.55) continue; // Don't spawn forest trees underwater
-        const slope = computeTerrainSlope(wx, wz);
         const biome = getBiomeAt(wx, wz);
 
-        if (s > 0.56 && tIdx < maxTrees && slope < 0.52) {
+        if (s > 0.56 && tIdx < maxTrees) {
+          const slope = computeTerrainSlope(wx, wz);
+          if (slope >= 0.52) continue;
           const sc = (0.78 + hash2(gx + 5, gz) * 0.65) * (biome === 'ember' ? 0.85 : 1.05);
           dummy.position.set(wx - originX, y - 0.15, wz - originZ);
           dummy.rotation.set(0, hash2(gx, gz + 9) * Math.PI * 2, 0);
@@ -252,7 +264,7 @@ export class VegetationSystem {
           dummy.updateMatrix();
           this.trunkMesh.setMatrixAt(tIdx, dummy.matrix);
           this.crownMesh.setMatrixAt(tIdx, dummy.matrix);
-          this.colliders.push({ x: wx, z: wz, radius: 0.42 * sc, height: 4.4 * sc });
+          this.colliders.push({ x: wx, z: wz, radius: 0.42 * sc, height: 4.4 * sc, blocksCamera: false });
 
           if (biome === 'ember') col.setHex(0x523f38);
           else if (season === 'Autumn') col.setHex(hash2(gx, gz) > 0.7 ? 0xb45309 : 0x3b6e3c);
@@ -261,16 +273,24 @@ export class VegetationSystem {
 
           this.crownMesh.setColorAt(tIdx, col);
           tIdx++;
-        } else if (s > 0.34 && s <= 0.44 && rIdx < this.rockMesh.count) {
+        } else if (s > 0.34 && s <= 0.44 && rIdx < maxRocks) {
           const rScale = 0.65 + hash2(gx * 2, gz * 3) * 1.45;
           dummy.position.set(wx - originX, y + rScale * 0.22, wz - originZ);
           dummy.rotation.set(hash2(gx, 1) * 0.5, hash2(gz, 2) * Math.PI * 2, hash2(gx, 3) * 0.5);
           dummy.scale.set(rScale * 1.15, rScale * 0.72, rScale);
           dummy.updateMatrix();
           this.rockMesh.setMatrixAt(rIdx, dummy.matrix);
-          this.colliders.push({ x: wx, z: wz, radius: 0.92 * rScale, height: 1.4 * rScale });
+          this.colliders.push({
+            x: wx,
+            z: wz,
+            radius: 0.92 * rScale,
+            height: 1.4 * rScale,
+            blocksCamera: rScale > 1.75,
+          });
           rIdx++;
-        } else if (s > 0.1 && s <= 0.32 && gIdx < maxGrass && slope < 0.45) {
+        } else if (s > 0.1 && s <= 0.32 && gIdx < maxGrass) {
+          const slope = computeTerrainSlope(wx, wz);
+          if (slope >= 0.45) continue;
           const gScale = 0.75 + hash2(gx, gz) * 0.6;
           dummy.position.set(wx - originX, y - 0.03, wz - originZ);
           dummy.rotation.set(0, hash2(gx, gz) * Math.PI, 0);

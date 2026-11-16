@@ -255,10 +255,11 @@ const _s = new THREE.Vector3();
 const _n = new THREE.Vector3();
 const _nm = new THREE.Matrix3();
 
+const _localM = new THREE.Matrix4();
 const BOX = new THREE.BoxGeometry(1, 1, 1);
 const CYL8 = new THREE.CylinderGeometry(1, 1, 1, 8);
 const CYL16 = new THREE.CylinderGeometry(1, 1, 1, 16);
-const CONE4 = new THREE.ConeGeometry(1, 1, 4);
+export const CONE4 = new THREE.ConeGeometry(1, 1, 4);
 const CONE8 = new THREE.ConeGeometry(1, 1, 8);
 const CONE16 = new THREE.ConeGeometry(1, 1, 16);
 const SPHERE = new THREE.SphereGeometry(1, 10, 8);
@@ -331,8 +332,8 @@ export class GeoBatch {
   put(mat: MatKey, geo: THREE.BufferGeometry, x: number, y: number, z: number, sx: number, sy: number, sz: number, color: number | THREE.Color, rx = 0, ry = 0, rz = 0) {
     _e.set(rx, ry, rz, 'YXZ');
     _q.setFromEuler(_e);
-    _m.compose(_v.set(x, y, z), _q, _s.set(sx, sy, sz));
-    this.add(mat, geo, _m.clone(), color);
+    _localM.compose(_v.set(x, y, z), _q, _s.set(sx, sy, sz));
+    this.add(mat, geo, _localM, color);
   }
 
   box(mat: MatKey, w: number, h: number, d: number, x: number, y: number, z: number, color: number | THREE.Color, rx = 0, ry = 0, rz = 0) {

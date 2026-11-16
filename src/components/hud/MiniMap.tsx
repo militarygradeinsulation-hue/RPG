@@ -57,7 +57,7 @@ export const MiniMap: React.FC<MiniMapProps> = ({
     const cache = terrainCacheRef.current;
     const dungeonId = activeDungeon?.id || null;
 
-    const movedEnough = Math.hypot(playerX - cache.x, playerZ - cache.z) > (wideZoom ? 2.5 : 1.2);
+    const movedEnough = Math.hypot(playerX - cache.x, playerZ - cache.z) > (wideZoom ? 6.0 : 3.2);
     const needsTerrainRedraw =
       !cache.imageData ||
       movedEnough ||
@@ -103,8 +103,8 @@ export const MiniMap: React.FC<MiniMapProps> = ({
           }
         }
       } else {
-        // Sample real-time overworld procedural terrain at 2px blocks for razor-sharp 60fps updates
-        const step = 2;
+        // Sample real-time overworld procedural terrain at 3px blocks to keep UI thread cost < 0.6ms
+        const step = 3;
         for (let py = 0; py < SIZE; py += step) {
           for (let px = 0; px < SIZE; px += step) {
             const wx = playerX + ((px - HALF) / HALF) * radarRadius;

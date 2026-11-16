@@ -143,19 +143,24 @@ export function* buildSettlement(
     };
   };
 
-  const place = (kind: BuildingKind, x: number, z: number, rot: number, w: number, d: number, floors: number) => {
+  function* placeGen(kind: BuildingKind, x: number, z: number, rot: number, w: number, d: number, floors: number): Generator<void, BuildingRecord, void> {
     const rec = buildHouse(main, makeSpec(kind, x, z, rot, w, d, floors), rand);
+    yield;
     rec.upperGroup = rec.upper.build(materials);
     rec.upperGroup.name = `${kind}-upper`;
     group.add(rec.upperGroup);
+    const bIdx = buildings.length;
     buildings.push(rec);
-    colliders.push(...rec.colliders);
+    for (const c of rec.colliders) {
+      c.bIdx = bIdx;
+      colliders.push(c);
+    }
     foot.push({ x, z, r: Math.hypot(w, d) / 2 });
     return rec;
-  };
+  }
 
   /** Tries to line a building along streets; returns the record or null. */
-  const placeAlongStreets = (kind: BuildingKind, maxR: number, minR = 0, tries = 40): BuildingRecord | null => {
+  function* placeAlongStreetsGen(kind: BuildingKind, maxR: number, minR = 0, tries = 40): Generator<void, BuildingRecord | null, void> {
     const [w0, w1, d0, d1, f0, f1] = KIND_SIZE[kind];
     for (let t = 0; t < tries; t++) {
       const st = rand.pick(streets);
@@ -174,10 +179,10 @@ export function* buildSettlement(
       // face the street (+z of the building toward the street), slightly irregular
       const rot = Math.atan2(-nx * side, -nz * side) + rand.range(-0.06, 0.06);
       if (!fits(x, z, w, d, rot, maxR, minR)) continue;
-      return place(kind, x, z, rot, w, d, rand.int(f0, f1));
+      return yield* placeGen(kind, x, z, rot, w, d, rand.int(f0, f1));
     }
     return null;
-  };
+  }
 
   // ---------------------------------------------------------------- layout
   const R = site.radius;
@@ -218,7 +223,7 @@ export function* buildSettlement(
     const kx = (-gx / gl) * cr * 0.32;
     const kz = (-gz / gl) * cr * 0.32;
     const [kw0, kw1, kd0, kd1, kf0, kf1] = KIND_SIZE.keep;
-    const keep = place('keep', kx, kz, Math.atan2(gx, gz), rand.range(kw0, kw1), rand.range(kd0, kd1), rand.int(kf0, kf1));
+    const keep = yield* placeGen('keep', kx, kz, Math.atan2(gx, gz), rand.range(kw0, kw1), rand.range(kd0, kd1), rand.int(kf0, kf1));
     insideSlot(keep, 'lord');
     yield;
     for (const kind of ['barracks', 'stable', 'smithy', rand.chance(0.6) ? 'chapel' : 'house'] as BuildingKind[]) {
@@ -232,7 +237,7 @@ export function* buildSettlement(
         const d = rand.range(d0, d1);
         const rot = Math.atan2(-x, -z);
         if (!fits(x, z, w, d, rot, cr - 2.5)) continue;
-        const rec = place(kind, x, z, rot, w, d, rand.int(f0, f1));
+        const rec = yield* placeGen(kind, x, z, rot, w, d, rand.int(f0, f1));
         insideSlot(rec, kind === 'smithy' ? 'smith' : kind === 'chapel' ? 'priest' : 'guard');
         break;
       }
@@ -240,6 +245,7 @@ export function* buildSettlement(
     }
     main.frame.identity();
     buildWallRing(main, { points: pts, height: rand.range(7, 9.5), thickness: 2.2, palisade: false, gates: [gate], roofMat: 'slate', banner, snow, groundY }, rand, colliders);
+    yield;
     // guards at the gate and on the courtyard
     roles.push({ role: 'guard', x: gx * 1.12 + (gb.x - ga.x) * 0.12, z: gz * 1.12 + (gb.z - ga.z) * 0.12, face: Math.atan2(gx, gz) });
     roles.push({ role: 'guard', x: gx * 1.12 - (gb.x - ga.x) * 0.12, z: gz * 1.12 - (gb.z - ga.z) * 0.12, face: Math.atan2(gx, gz) });
@@ -253,11 +259,12 @@ export function* buildSettlement(
       prop.dummy(main, x, groundY(x, z), z, rand);
     }
     prop.well(main, 0, groundY(0, 0), 0, rand, snow);
-    colliders.push({ x: 0, z: 0, r: 1.3 });
+    colliders.push({ x: 0, z: 0, r: 1.3, h: 2.4, cam: false });
     // a few cottages outside the gate along the road
     for (let k = 0; k < rand.int(2, 4); k++) {
-      const rec = placeAlongStreets('cottage', R * 1.0, cr + 4);
+      const rec = yield* placeAlongStreetsGen('cottage', R * 1.0, cr + 4);
       if (rec) roles.push({ role: 'farmer', x: rec.doorOut.x, z: rec.doorOut.z, face: rec.rot, home: rec });
+      yield;
     }
     yield;
   } else {
@@ -281,7 +288,7 @@ export function* buildSettlement(
     }
     const sq = site.type === 'town' ? 12 : site.type === 'village' ? 7 : 0;
     for (const kind of plan) {
-      const rec = placeAlongStreets(kind, maxR, sq + 2);
+      const rec = yield* placeAlongStreetsGen(kind, maxR, sq + 2);
       if (rec) {
         if (kind === 'smithy') insideSlot(rec, 'smith');
         else if (kind === 'inn') insideSlot(rec, 'innkeeper');
@@ -295,7 +302,7 @@ export function* buildSettlement(
     // village heart: well, market stalls, notice board, lamps
     if (site.type !== 'hamlet') {
       prop.well(main, 0, groundY(0, 0), 0, rand, snow);
-      colliders.push({ x: 0, z: 0, r: 1.3 });
+      colliders.push({ x: 0, z: 0, r: 1.3, h: 2.4, cam: false });
       const stalls = site.type === 'town' ? rand.int(4, 7) : rand.int(1, 3);
       for (let k = 0; k < stalls; k++) {
         const a = (k / stalls) * Math.PI * 2 + rand.range(-0.2, 0.2) + site.angle;
@@ -304,7 +311,7 @@ export function* buildSettlement(
         const z = Math.sin(a) * rr;
         const face = Math.atan2(-x, -z);
         prop.stall(main, x, groundY(x, z), z, face, rand);
-        colliders.push({ x, z, r: 1.3 });
+        colliders.push({ x, z, r: 1.3, h: 2.4, cam: false });
         if (k < 3) roles.push({ role: 'merchant', x: x - Math.sin(face) * 1.2, z: z - Math.cos(face) * 1.2, face });
       }
     }
@@ -321,7 +328,7 @@ export function* buildSettlement(
         const z = st.az + (st.bz - st.az) * t - oz + nz * (st.width / 2 + 0.6) * (k % 2 ? 1 : -1);
         if (foot.some((f) => Math.hypot(f.x - x, f.z - z) < f.r)) continue;
         prop.lamp(main, x, groundY(x, z), z, rand);
-        colliders.push({ x, z, r: 0.25 });
+        colliders.push({ x, z, r: 0.25, h: 3.1, cam: false });
       }
     }
     yield;
@@ -341,6 +348,7 @@ export function* buildSettlement(
         foot.push({ x, z, r: Math.hypot(pw, pd) / 2 });
         break;
       }
+      yield;
     }
     for (let k = 0; k < rand.int(1, 4); k++) {
       const x = rand.range(-R * 0.6, R * 0.6);
@@ -349,7 +357,7 @@ export function* buildSettlement(
       if (streets.some((st) => distToSeg(x, z, st, ox, oz) < st.width / 2 + 1)) continue;
       if (rand.chance(0.5)) prop.haystack(main, x, groundY(x, z), z, rand);
       else prop.cart(main, x, groundY(x, z), z, rand.range(0, Math.PI * 2), rand);
-      colliders.push({ x, z, r: 1.2 });
+      colliders.push({ x, z, r: 1.2, h: 1.6, cam: false });
     }
     // town wall
     if (walled) {
@@ -380,6 +388,7 @@ export function* buildSettlement(
         }
       }
       const palisade = wealth < 0.72;
+      yield;
       buildWallRing(main, { points: pts, height: palisade ? 4.2 : 6.5, thickness: palisade ? 0.5 : 1.8, palisade, gates, roofMat: palisade ? 'shingle' : 'slate', banner, snow, groundY }, rand, colliders);
       for (const gi of gates.slice(0, 2)) {
         const a = pts[gi];
@@ -393,15 +402,19 @@ export function* buildSettlement(
   }
 
   // ------------------------------------------------------------- finalize
-  // merge the settlement's static geometry one material per step
+  // merge the settlement's static geometry in bounded slices so no single frame stalls
   main.frame.identity();
   const mats = Array.from(main.parts.keys());
+  const SLICE_LIMIT = 220;
   for (const mk of mats) {
-    const sub = new GeoBatch();
-    sub.parts.set(mk, main.parts.get(mk)!);
-    const g = sub.build(materials);
-    g.children.forEach((c) => group.add(c));
-    yield;
+    const geos = main.parts.get(mk)!;
+    for (let offset = 0; offset < geos.length; offset += SLICE_LIMIT) {
+      const sub = new GeoBatch();
+      sub.parts.set(mk, geos.slice(offset, offset + SLICE_LIMIT));
+      const g = sub.build(materials);
+      g.children.forEach((c) => group.add(c));
+      yield;
+    }
   }
   main.parts.clear();
 
@@ -512,15 +525,15 @@ const prop = {
       if (!snow) for (let k = 0; k < Math.floor(w / 0.6); k++) b.sphere('foliage', rand.range(0.14, 0.24), -w / 2 + 0.6 + k * 0.6, 0.25, rz, tint(crop, rand, 0.15), rand.range(0.8, 1.6));
     }
     const scarecrow = rand.chance(0.5);
-    // fence colliders (rough)
+    // fence colliders (rough, low so they never yank camera)
     const c = Math.cos(rot);
     const s = Math.sin(rot);
-    const add = (lx: number, lz: number) => colliders.push({ x: x + lx * c + lz * s, z: z - lx * s + lz * c, r: 0.3 });
-    for (let px = -w / 2; px <= w / 2; px += 0.6) {
+    const add = (lx: number, lz: number) => colliders.push({ x: x + lx * c + lz * s, z: z - lx * s + lz * c, r: 0.42, h: 1.1, cam: false });
+    for (let px = -w / 2; px <= w / 2; px += 1.05) {
       add(px, -d / 2);
-      if (Math.abs(px) > w * 0.12) add(px, d / 2);
+      if (Math.abs(px) > w * 0.14) add(px, d / 2);
     }
-    for (let pz = -d / 2; pz <= d / 2; pz += 0.6) {
+    for (let pz = -d / 2; pz <= d / 2; pz += 1.05) {
       add(-w / 2, pz);
       add(w / 2, pz);
     }

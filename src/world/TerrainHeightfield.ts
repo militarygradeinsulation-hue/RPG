@@ -548,7 +548,13 @@ export interface SettlementSite {
 
 export const SETTLEMENT_CELL = 280;
 const CORE_EXCLUSION_RADIUS = 250;
-const siteCache = new Map<string, SettlementSite | null>();
+const siteCache = new Map<number, SettlementSite | null>();
+const siteNeighborhoodCache = new Map<number, readonly SettlementSite[]>();
+const EMPTY_SITES: readonly SettlementSite[] = [];
+
+function cellKey(cx: number, cz: number): number {
+  return (cx + 32768) * 65536 + (cz + 32768);
+}
 
 const NAME_A = ['Ash', 'Bram', 'Cold', 'Dun', 'Elder', 'Fen', 'Grey', 'Haw', 'Iron', 'Kings', 'Lark', 'Mire', 'North', 'Oak', 'Raven', 'Stone', 'Thorn', 'Wolf', 'Winter', 'Amber', 'Frost', 'Ember', 'Sun', 'Moss', 'Brine', 'Hollow', 'Silver', 'Black', 'White', 'Red', 'Glen', 'Hart', 'Wyn', 'Bryn', 'Crow', 'Elm', 'Fox', 'Gold', 'High', 'Low'];
 const NAME_B = ['ford', 'wick', 'holm', 'stead', 'hollow', 'vale', 'reach', 'haven', 'gate', 'moor', 'barrow', 'fell', 'crest', 'by', 'thorpe', 'watch', 'bridge', 'mere', 'field', 'wood', 'brook', 'stone', 'hearth', 'march', 'shire', 'combe', 'ridge', 'dale'];
@@ -599,7 +605,7 @@ function buildStreets(type: SettlementType, x: number, z: number, radius: number
 
 /** Deterministic settlement (or null) for a settlement cell. */
 export function getSettlementSite(cx: number, cz: number): SettlementSite | null {
-  const key = cx + ',' + cz;
+  const key = cellKey(cx, cz);
   const cached = siteCache.get(key);
   if (cached !== undefined) return cached;
   const result = computeSite(cx, cz);
@@ -688,11 +694,31 @@ export function settlementsNear(x: number, z: number, range: number): Settlement
 function siteAt(x: number, z: number): SettlementSite | null {
   const cx = Math.floor(x / SETTLEMENT_CELL);
   const cz = Math.floor(z / SETTLEMENT_CELL);
-  for (let dz = -1; dz <= 1; dz++) {
-    for (let dx = -1; dx <= 1; dx++) {
-      const s = getSettlementSite(cx + dx, cz + dz);
-      if (s && Math.abs(x - s.x) < s.radius * 1.5 && Math.abs(z - s.z) < s.radius * 1.5) return s;
+  const key = cellKey(cx, cz);
+  let near = siteNeighborhoodCache.get(key);
+  if (near === undefined) {
+    const minX = cx * SETTLEMENT_CELL;
+    const maxX = minX + SETTLEMENT_CELL;
+    const minZ = cz * SETTLEMENT_CELL;
+    const maxZ = minZ + SETTLEMENT_CELL;
+    const found: SettlementSite[] = [];
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const s = getSettlementSite(cx + dx, cz + dz);
+        if (!s) continue;
+        const reach = s.radius * 1.5;
+        if (s.x + reach >= minX && s.x - reach <= maxX && s.z + reach >= minZ && s.z - reach <= maxZ) {
+          found.push(s);
+        }
+      }
     }
+    near = found.length ? found : EMPTY_SITES;
+    siteNeighborhoodCache.set(key, near);
+  }
+  for (let i = 0; i < near.length; i++) {
+    const s = near[i];
+    const reach = s.radius * 1.5;
+    if (Math.abs(x - s.x) < reach && Math.abs(z - s.z) < reach) return s;
   }
   return null;
 }

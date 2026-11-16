@@ -9,6 +9,7 @@ export interface CircleCollider {
   z: number;
   radius: number;
   height?: number;
+  blocksCamera?: boolean;
 }
 
 export interface IceBridgePatch {
@@ -66,6 +67,7 @@ export function stepPlayerPhysics(params: {
   activeDungeon: DungeonBounds | null;
   colliders: CircleCollider[];
   extraColliders?: CircleCollider[];
+  extraColliders2?: CircleCollider[];
   iceBridges: IceBridgePatch[];
   ships: ShipRuntime[];
   waveSampler: OceanWaveSampler;
@@ -81,6 +83,7 @@ export function stepPlayerPhysics(params: {
     activeDungeon,
     colliders,
     extraColliders,
+    extraColliders2,
     iceBridges,
     ships,
     waveSampler,
@@ -160,34 +163,44 @@ export function stepPlayerPhysics(params: {
   // movement allows the player to slide along obstacles instead of snapping
   // diagonally away from them. Include the degenerate exact-centre case.
   const playerRadius = 0.52;
-  const candidateColliders = extraColliders?.length
-    ? [...colliders, ...extraColliders]
-    : colliders;
+  const resolveAgainstList = (
+    list: CircleCollider[] | undefined,
+    axis: 'x' | 'z',
+    currentVal: number,
+    other: number
+  ): number => {
+    if (!list || list.length === 0) return currentVal;
+    let value = currentVal;
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i];
+      const radius = c.radius + playerRadius;
+      const fixedOffset = other - (axis === 'x' ? c.z : c.x);
+      if (Math.abs(fixedOffset) >= radius) continue;
+      const center = axis === 'x' ? c.x : c.z;
+      const reachSq = radius * radius - fixedOffset * fixedOffset;
+      if (reachSq <= 0) continue;
+      const reach = Math.sqrt(reachSq);
+      const delta = value - center;
+      if (Math.abs(delta) >= reach) continue;
+      if (c.height !== undefined && y > groundHeightAt(c.x, c.z) + c.height) continue;
+
+      const start = axis === 'x' ? x : z;
+      const startDelta = start - center;
+      const sign = Math.abs(startDelta) >= reach - 1e-4
+        ? Math.sign(startDelta)
+        : Math.abs(delta) > 1e-6
+          ? Math.sign(delta)
+          : (startDelta < 0 ? -1 : 1);
+      value = center + sign * reach;
+    }
+    return value;
+  };
   const resolveAxis = (axis: 'x' | 'z', proposed: number, other: number) => {
     let value = proposed;
     for (let pass = 0; pass < 2; pass++) {
-      for (const c of candidateColliders) {
-        if (c.height !== undefined && y > groundHeightAt(c.x, c.z) + c.height) continue;
-        const radius = c.radius + playerRadius;
-        const fixedOffset = other - (axis === 'x' ? c.z : c.x);
-        if (Math.abs(fixedOffset) >= radius) continue;
-        const center = axis === 'x' ? c.x : c.z;
-        const reach = Math.sqrt(Math.max(0, radius * radius - fixedOffset * fixedOffset));
-        const delta = value - center;
-        if (Math.abs(delta) < reach) {
-          // Prefer the incoming side if we start inside an obstacle.
-          const start = axis === 'x' ? x : z;
-          const startDelta = start - center;
-          // Do not tunnel through a collider when a frame's proposed
-          // movement crosses its centre. Resolve toward the entry side.
-          const sign = Math.abs(startDelta) >= reach - 1e-4
-            ? Math.sign(startDelta)
-            : Math.abs(delta) > 1e-6
-              ? Math.sign(delta)
-              : (startDelta < 0 ? -1 : 1);
-          value = center + sign * reach;
-        }
-      }
+      value = resolveAgainstList(colliders, axis, value, other);
+      value = resolveAgainstList(extraColliders, axis, value, other);
+      value = resolveAgainstList(extraColliders2, axis, value, other);
     }
     return value;
   };
@@ -322,7 +335,8 @@ export function resolveCameraCollision(params: {
   activeDungeon: DungeonBounds | null;
   colliders: CircleCollider[];
   extraColliders?: CircleCollider[];
-}): { x: number; y: number; z: number } {
+  extraColliders2?: CircleCollider[];
+}): { x: number; y: number; z: number; t: number } {
   const {
     targetWorldX,
     targetWorldY,
@@ -333,64 +347,100 @@ export function resolveCameraCollision(params: {
     activeDungeon,
     colliders,
     extraColliders,
+    extraColliders2,
   } = params;
 
   const camRadius = physicsConfig.cameraSphereRadiusM;
+  const minT = 0.26;
   let maxT = 1.0;
 
-  // Sweep 6 samples along the boom ray against static colliders + dungeon bounds
   const dx = desiredWorldX - targetWorldX;
   const dy = desiredWorldY - targetWorldY;
   const dz = desiredWorldZ - targetWorldZ;
+  const lenXZSq = dx * dx + dz * dz;
 
-  const testColliderList = (list: CircleCollider[], t: number) => {
-    const sx = targetWorldX + dx * t;
-    const sy = targetWorldY + dy * t;
-    const sz = targetWorldZ + dz * t;
-    for (let i = 0; i < list.length; i++) {
-      const c = list[i];
-      const rSum = c.radius + camRadius;
-      const ox = sx - c.x;
-      const oz = sz - c.z;
-      if (ox * ox + oz * oz < rSum * rSum) {
-        const baseH = activeDungeon ? 0 : groundHeightAt(c.x, c.z);
-        const topH = baseH + (c.height ?? 5.5);
-        if (sy <= topH + camRadius) {
-          return true;
+  if (activeDungeon) {
+    const minBx = activeDungeon.minX + camRadius;
+    const maxBx = activeDungeon.maxX - camRadius;
+    const minBz = activeDungeon.minZ + camRadius;
+    const maxBz = activeDungeon.maxZ - camRadius;
+    if (dx < -1e-5 && targetWorldX + dx < minBx) {
+      maxT = Math.min(maxT, Math.max(minT, (minBx - targetWorldX) / dx));
+    } else if (dx > 1e-5 && targetWorldX + dx > maxBx) {
+      maxT = Math.min(maxT, Math.max(minT, (maxBx - targetWorldX) / dx));
+    }
+    if (dz < -1e-5 && targetWorldZ + dz < minBz) {
+      maxT = Math.min(maxT, Math.max(minT, (minBz - targetWorldZ) / dz));
+    } else if (dz > 1e-5 && targetWorldZ + dz > maxBz) {
+      maxT = Math.min(maxT, Math.max(minT, (maxBz - targetWorldZ) / dz));
+    }
+  } else if (lenXZSq > 1e-4) {
+    const minRayX = Math.min(targetWorldX, desiredWorldX);
+    const maxRayX = Math.max(targetWorldX, desiredWorldX);
+    const minRayZ = Math.min(targetWorldZ, desiredWorldZ);
+    const maxRayZ = Math.max(targetWorldZ, desiredWorldZ);
+
+    const sweepList = (list: CircleCollider[] | undefined) => {
+      if (!list || list.length === 0) return;
+      for (let i = 0; i < list.length; i++) {
+        const c = list[i];
+        // Ignore thin foliage, furniture, fences, and cutaway interior walls so the camera never spasms
+        if (c.blocksCamera === false) continue;
+        const h = c.height ?? 5.5;
+        if (h < 2.2 || c.radius < 0.42) continue;
+
+        const rSum = c.radius + camRadius;
+        if (
+          c.x + rSum < minRayX ||
+          c.x - rSum > maxRayX ||
+          c.z + rSum < minRayZ ||
+          c.z - rSum > maxRayZ
+        ) {
+          continue;
+        }
+
+        // Analytic 2D ray-circle intersection: P(t) = target + t * d, t in [0, maxT]
+        const fx = targetWorldX - c.x;
+        const fz = targetWorldZ - c.z;
+        const bHalf = fx * dx + fz * dz;
+        const cTerm = fx * fx + fz * fz - rSum * rSum;
+
+        // If the anchor itself is already inside this collider's expanded radius, skip it
+        // so walking through doorways or hugging walls never pins the camera into the player's head.
+        if (cTerm <= 0.04) continue;
+        if (bHalf >= 0) continue; // Ray points away from obstacle
+
+        const disc = bHalf * bHalf - lenXZSq * cTerm;
+        if (disc <= 0) continue;
+
+        const tHit = (-bHalf - Math.sqrt(disc)) / lenXZSq;
+        if (tHit < 0 || tHit >= maxT) continue;
+
+        const hitY = targetWorldY + dy * tHit;
+        const topH = groundHeightAt(c.x, c.z) + h;
+        if (hitY <= topH + camRadius * 0.65) {
+          maxT = Math.max(minT, tHit);
         }
       }
-    }
-    return false;
-  };
+    };
 
-  const steps = 8;
-  for (let s = 1; s <= steps; s++) {
-    const t = s / steps;
-    const sx = targetWorldX + dx * t;
-    const sz = targetWorldZ + dz * t;
-    if (activeDungeon) {
-      if (
-        sx <= activeDungeon.minX + camRadius ||
-        sx >= activeDungeon.maxX - camRadius ||
-        sz <= activeDungeon.minZ + camRadius ||
-        sz >= activeDungeon.maxZ - camRadius
-      ) {
-        maxT = Math.max(0.22, (s - 1) / steps);
-        break;
-      }
-    } else if (testColliderList(colliders, t) || (extraColliders && testColliderList(extraColliders, t))) {
-      maxT = Math.max(0.22, (s - 1) / steps);
-      break;
-    }
+    sweepList(colliders);
+    sweepList(extraColliders);
+    sweepList(extraColliders2);
   }
 
   const finalX = targetWorldX + dx * maxT;
   const finalZ = targetWorldZ + dz * maxT;
   let finalY = targetWorldY + dy * maxT;
   if (!activeDungeon) {
-    finalY = Math.max(finalY, groundHeightAt(finalX, finalZ) + 0.65);
+    // Smoothly clear intermediate hill crests as well as the endpoint ground
+    const midX = targetWorldX + dx * (maxT * 0.6);
+    const midZ = targetWorldZ + dz * (maxT * 0.6);
+    const endFloor = groundHeightAt(finalX, finalZ) + 0.72;
+    const midFloor = groundHeightAt(midX, midZ) + 0.45 - dy * (maxT * 0.4);
+    finalY = Math.max(finalY, endFloor, midFloor);
   } else {
     finalY = THREE.MathUtils.clamp(finalY, 0.7, 7.6);
   }
-  return { x: finalX, y: finalY, z: finalZ };
+  return { x: finalX, y: finalY, z: finalZ, t: maxT };
 }

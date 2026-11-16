@@ -362,14 +362,17 @@ export class WorldEngine {
   private lastAnimYaw = 0;
   /** Player position at the start of the latest fixed step, for render interpolation. */
   private readonly prevSimPos = new THREE.Vector3(Number.NaN, 0, 0);
+  private readonly prevShipSimPos = new THREE.Vector3(Number.NaN, 0, 0);
   private renderAlpha = 1;
   private readonly renderPos = new THREE.Vector3();
+  private readonly renderShipPos = new THREE.Vector3();
   private playerSquashY = 1;
   private lastFootstepPhase = 0;
 
   private cameraYaw = 0;
   private cameraPitch = 0.36;
   private cameraDist = 11.5;
+  private smoothedBoomRatio = 1.0;
   private readonly smoothCamTarget = new THREE.Vector3(0, 2.5, 6);
   private readonly smoothCamPos = new THREE.Vector3(0, 8, 18);
   private readonly tmpCamVec = new THREE.Vector3();
@@ -385,6 +388,7 @@ export class WorldEngine {
     // Reset elapsed time after a tab switches back to the foreground.
     this.loop.reset();
     this.prevSimPos.set(Number.NaN, 0, 0);
+    this.prevShipSimPos.set(Number.NaN, 0, 0);
     if (document.hidden) this.input.setEnabled(false);
     else this.input.setEnabled(this.gameMode === 'playing');
   };
@@ -1447,9 +1451,15 @@ export class WorldEngine {
     this.playerState.z = z;
     this.playerState.y = Math.max(y, WATER_LEVEL + 0.35);
     this.velocityY = 0;
+    this.prevSimPos.set(this.playerState.x, this.playerState.y, this.playerState.z);
+    this.prevShipSimPos.set(Number.NaN, 0, 0);
+    this.lastAnimPos.set(this.playerState.x, this.playerState.y, this.playerState.z);
+    this.smoothedBoomRatio = 1.0;
     this.origin.update(x, z, [
       this.chunkStreamer.group,
       this.vegetation.group,
+      this.livingSettlements.group,
+      ...this.settlements.shiftables(),
       this.seaLife.group,
       ...Array.from(this.npcMeshes.values()),
       ...Array.from(this.outpostMeshes.values()),
@@ -1457,9 +1467,19 @@ export class WorldEngine {
       ...Array.from(this.caravanMeshes.values()),
       ...Array.from(this.wreckMeshes.values()),
     ]);
+    const localX = this.origin.toLocalX(x);
+    const localZ = this.origin.toLocalZ(z);
+    this.smoothCamTarget.set(localX, this.playerState.y + 1.75, localZ);
+    const horizDist = Math.cos(this.cameraPitch) * this.cameraDist;
+    this.smoothCamPos.set(
+      localX + Math.sin(this.cameraYaw) * horizDist,
+      this.smoothCamTarget.y + Math.sin(this.cameraPitch) * this.cameraDist,
+      localZ + Math.cos(this.cameraYaw) * horizDist
+    );
     this.syncWorldPinnedTransforms(this.clockState.elapsedPlaySeconds);
     this.chunkStreamer.update(x, z, this.origin.originX, this.origin.originZ, this.biomes, this.season);
     this.vegetation.populateAround(x, z, this.origin.originX, this.origin.originZ, this.season, true);
+    this.livingSettlements.update(x, z, this.origin.originX, this.origin.originZ);
     this.oceanSurface.followPlayer(x, z, this.origin.originX, this.origin.originZ);
     this.callbacks.onPlayerStatsUpdate({ x: this.playerState.x, y: this.playerState.y, z: this.playerState.z });
   }
@@ -2159,10 +2179,17 @@ export class WorldEngine {
       (fixedDt) => {
         if (this.gameMode === 'playing') {
           if (this.hitstopTimer > 0) {
+            this.prevSimPos.set(this.playerState.x, this.playerState.y, this.playerState.z);
             this.hitstopTimer = Math.max(0, this.hitstopTimer - fixedDt);
             return;
           }
           this.prevSimPos.set(this.playerState.x, this.playerState.y, this.playerState.z);
+          if (this.atHelmShipId) {
+            const helmShip = this.ships.find((s) => s.id === this.atHelmShipId);
+            if (helmShip) this.prevShipSimPos.set(helmShip.x, helmShip.y, helmShip.z);
+          } else {
+            this.prevShipSimPos.set(Number.NaN, 0, 0);
+          }
           this.stepSimulation(fixedDt);
         }
       },
@@ -2244,10 +2271,13 @@ export class WorldEngine {
       // transforms sixty times per second during ordinary exploration.
       if (Math.abs(this.playerState.x - this.origin.originX) >= 1024 ||
           Math.abs(this.playerState.z - this.origin.originZ) >= 1024) {
+        const prevOx = this.origin.originX;
+        const prevOz = this.origin.originZ;
         const shifted = this.origin.update(this.playerState.x, this.playerState.z, [
           this.chunkStreamer.group,
           this.vegetation.group,
           this.livingSettlements.group,
+          ...this.settlements.shiftables(),
           this.seaLife.group,
           ...this.npcMeshes.values(),
           ...this.outpostMeshes.values(),
@@ -2255,7 +2285,15 @@ export class WorldEngine {
           ...this.caravanMeshes.values(),
           ...this.wreckMeshes.values(),
         ]);
-        if (shifted) this.syncWorldPinnedTransforms(elapsed);
+        if (shifted) {
+          const shiftLocalX = prevOx - this.origin.originX;
+          const shiftLocalZ = prevOz - this.origin.originZ;
+          this.smoothCamTarget.x += shiftLocalX;
+          this.smoothCamTarget.z += shiftLocalZ;
+          this.smoothCamPos.x += shiftLocalX;
+          this.smoothCamPos.z += shiftLocalZ;
+          this.syncWorldPinnedTransforms(elapsed);
+        }
       }
 
       this.chunkStreamer.update(
@@ -2552,7 +2590,8 @@ export class WorldEngine {
       diveHeld: climbOrDiveHeld,
       activeDungeon: this.activeDungeon ? { minX: -18.5, maxX: 18.5, minZ: -44.5, maxZ: 13.0 } : null,
       colliders: this.colliders,
-      extraColliders: this.activeDungeon ? undefined : this.settlements.colliders.length ? this.vegetation.colliders.concat(this.settlements.colliders) : this.vegetation.colliders,
+      extraColliders: this.activeDungeon ? undefined : this.vegetation.colliders,
+      extraColliders2: this.activeDungeon ? undefined : this.settlements.colliders,
       iceBridges: this.iceBridges,
       ships: this.ships,
       waveSampler: this.waveSampler,
@@ -2696,9 +2735,11 @@ export class WorldEngine {
         this.companionPos.y,
         this.origin.toLocalZ(this.playerState.z)
       );
-      const cPrev = (this.companionMesh.userData.lastPos as THREE.Vector3 | undefined) ?? this.companionPos.clone();
-      const cSpeed = dt > 0 ? Math.hypot(this.companionPos.x - cPrev.x, this.companionPos.z - cPrev.z) / dt : 0;
-      this.companionMesh.userData.lastPos = this.companionPos.clone();
+      const cPrevX = (this.companionMesh.userData.lastX as number | undefined) ?? this.companionPos.x;
+      const cPrevZ = (this.companionMesh.userData.lastZ as number | undefined) ?? this.companionPos.z;
+      const cSpeed = dt > 0 ? Math.hypot(this.companionPos.x - cPrevX, this.companionPos.z - cPrevZ) / dt : 0;
+      this.companionMesh.userData.lastX = this.companionPos.x;
+      this.companionMesh.userData.lastZ = this.companionPos.z;
       (this.companionMesh.userData.character as Character | undefined)?.update(dt, {
         speed: Math.min(6.5, cSpeed * 0.52),
         swimming: this.companionPos.y <= WATER_LEVEL + 0.15,
@@ -2869,6 +2910,7 @@ export class WorldEngine {
 
   private updateAtmosphereAndVisuals(dt: number) {
     const elapsed = this.clockState.elapsedPlaySeconds;
+    const effDt = Math.min(0.05, Math.max(0, dt));
     // Interpolate between the last two fixed simulation steps so motion is smooth at any refresh rate.
     const cur = this.renderPos.set(this.playerState.x, this.playerState.y, this.playerState.z);
     if (Number.isFinite(this.prevSimPos.x) && this.prevSimPos.distanceToSquared(cur) < 25) {
@@ -2889,20 +2931,31 @@ export class WorldEngine {
     );
 
     if (this.gameMode === 'title') {
-      this.cameraYaw += dt * 0.14;
+      this.cameraYaw += effDt * 0.14;
     }
 
     const activeShip = this.atHelmShipId ? this.ships.find((s) => s.id === this.atHelmShipId) : null;
-    const lookAnchorX = activeShip ? this.origin.toLocalX(activeShip.x) : plx;
-    const lookAnchorZ = activeShip ? this.origin.toLocalZ(activeShip.z) : plz;
-    const lookAnchorY = activeShip ? activeShip.y + 3.2 : rY + (this.isCrouching ? 1.15 : 1.75);
+    let lookAnchorX = plx;
+    let lookAnchorZ = plz;
+    let lookAnchorY = rY + (this.isCrouching ? 1.15 : 1.75);
+    if (activeShip) {
+      const shipCur = this.renderShipPos.set(activeShip.x, activeShip.y, activeShip.z);
+      if (Number.isFinite(this.prevShipSimPos.x) && this.prevShipSimPos.distanceToSquared(shipCur) < 36) {
+        shipCur.lerpVectors(this.prevShipSimPos, shipCur, this.renderAlpha);
+      }
+      lookAnchorX = this.origin.toLocalX(shipCur.x);
+      lookAnchorZ = this.origin.toLocalZ(shipCur.z);
+      lookAnchorY = shipCur.y + 3.2;
+    }
 
-    this.smoothCamTarget.lerp(this.tmpCamVec.set(lookAnchorX, lookAnchorY, lookAnchorZ), 1 - Math.exp(-dt * 12));
+    if (effDt > 0) {
+      this.smoothCamTarget.lerp(this.tmpCamVec.set(lookAnchorX, lookAnchorY, lookAnchorZ), 1 - Math.exp(-effDt * 16));
+    }
 
     const horizDist = Math.cos(this.cameraPitch) * this.cameraDist;
-    const desiredCamX = this.smoothCamTarget.x + Math.sin(this.cameraYaw) * horizDist;
-    const desiredCamZ = this.smoothCamTarget.z + Math.cos(this.cameraYaw) * horizDist;
-    const desiredCamY = this.smoothCamTarget.y + Math.sin(this.cameraPitch) * this.cameraDist;
+    const boomOffsetX = Math.sin(this.cameraYaw) * horizDist;
+    const boomOffsetZ = Math.cos(this.cameraYaw) * horizDist;
+    const boomOffsetY = Math.sin(this.cameraPitch) * this.cameraDist;
 
     const ox = this.activeDungeon ? 0 : this.origin.originX;
     const oz = this.activeDungeon ? 0 : this.origin.originZ;
@@ -2910,20 +2963,40 @@ export class WorldEngine {
       targetWorldX: this.smoothCamTarget.x + ox,
       targetWorldY: this.smoothCamTarget.y,
       targetWorldZ: this.smoothCamTarget.z + oz,
-      desiredWorldX: desiredCamX + ox,
-      desiredWorldY: desiredCamY,
-      desiredWorldZ: desiredCamZ + oz,
+      desiredWorldX: this.smoothCamTarget.x + boomOffsetX + ox,
+      desiredWorldY: this.smoothCamTarget.y + boomOffsetY,
+      desiredWorldZ: this.smoothCamTarget.z + boomOffsetZ + oz,
       activeDungeon: this.activeDungeon ? { minX: -18.5, maxX: 18.5, minZ: -44.5, maxZ: 13.0 } : null,
       colliders: this.colliders,
-      extraColliders: this.activeDungeon ? undefined : this.settlements.colliders.length ? this.vegetation.colliders.concat(this.settlements.colliders) : this.vegetation.colliders,
+      extraColliders: this.activeDungeon ? undefined : this.vegetation.colliders,
+      extraColliders2: this.activeDungeon ? undefined : this.settlements.colliders,
     });
-    this.smoothCamPos.lerp(
-      this.tmpCamVec.set(resolvedCamWorld.x - ox, resolvedCamWorld.y, resolvedCamWorld.z - oz),
-      1 - Math.exp(-dt * 14)
-    );
+
+    // Asymmetric spring on boom distance: pull in briskly on solid obstruction, ease back out gently when clear
+    if (effDt > 0) {
+      const boomRate = resolvedCamWorld.t < this.smoothedBoomRatio ? 22 : 5.5;
+      this.smoothedBoomRatio += (resolvedCamWorld.t - this.smoothedBoomRatio) * (1 - Math.exp(-effDt * boomRate));
+    }
+    const clampedBoomT = Math.min(resolvedCamWorld.t + 0.04, this.smoothedBoomRatio);
+    const targetLocalCamX = this.smoothCamTarget.x + boomOffsetX * clampedBoomT;
+    const targetLocalCamZ = this.smoothCamTarget.z + boomOffsetZ * clampedBoomT;
+    let targetLocalCamY = this.smoothCamTarget.y + boomOffsetY * clampedBoomT;
+    if (!this.activeDungeon) {
+      const floorAtCam = groundHeightAt(targetLocalCamX + ox, targetLocalCamZ + oz) + 0.72;
+      targetLocalCamY = Math.max(targetLocalCamY, floorAtCam, resolvedCamWorld.t < 0.999 ? resolvedCamWorld.y : -999);
+    } else {
+      targetLocalCamY = THREE.MathUtils.clamp(targetLocalCamY, 0.7, 7.6);
+    }
+
+    if (effDt > 0) {
+      this.smoothCamPos.lerp(
+        this.tmpCamVec.set(targetLocalCamX, targetLocalCamY, targetLocalCamZ),
+        1 - Math.exp(-effDt * 18)
+      );
+    }
 
     if (this.screenShake > 0) {
-      this.screenShake = Math.max(0, this.screenShake - dt * 1.8);
+      this.screenShake = Math.max(0, this.screenShake - effDt * 1.8);
       this.camera.position.set(
         this.smoothCamPos.x + (Math.random() - 0.5) * this.screenShake,
         this.smoothCamPos.y + (Math.random() - 0.5) * this.screenShake,
@@ -2935,30 +3008,36 @@ export class WorldEngine {
     this.camera.lookAt(this.smoothCamTarget);
 
     // Settlements: stream buildings and people around the player
-    this.settlements.update(dt, this.playerState.x, this.playerState.z, this.clockState.timeOfDayIndex, !this.activeDungeon);
+    if (effDt > 0) {
+      this.settlements.update(effDt, this.playerState.x, this.playerState.z, this.clockState.timeOfDayIndex, !this.activeDungeon);
+    }
 
     // 2. Player Procedural Rig Animation (Walk / Swim / Crouch / Block / Attack)
     this.playerModel.group.position.set(plx, rY, plz);
-    this.playerSquashY = THREE.MathUtils.lerp(this.playerSquashY, 1.0, Math.min(1, dt * 12));
+    this.playerSquashY = THREE.MathUtils.lerp(this.playerSquashY, 1.0, Math.min(1, effDt * 12));
     this.playerModel.bodyPivot.scale.set(1, this.playerSquashY, 1);
 
     // Real ground speed from position change (world units/s), mapped to the rig's gait scale.
-    // Game run speed 7.8 -> jog, sprint 12.6 -> full sprint.
-    const pdx = cur.x - this.lastAnimPos.x;
-    const pdz = cur.z - this.lastAnimPos.z;
-    this.lastAnimPos.copy(cur);
-    const groundSpeed = dt > 0 ? Math.min(30, Math.hypot(pdx, pdz) / dt) : 0;
-    const turnDelta = this.playerModel.group.rotation.y - this.lastAnimYaw;
-    this.lastAnimYaw = this.playerModel.group.rotation.y;
-    const atHelm = Boolean(this.atHelmShipId);
-    this.playerModel.character.update(dt, {
-      speed: atHelm ? 0 : groundSpeed * 0.52,
-      turnRate: dt > 0 ? turnDelta / dt : 0,
-      crouching: this.isCrouching && !this.isSwimming,
-      swimming: this.isSwimming,
-      blocking: this.input.isBlocking() && !atHelm,
-      airborne: !this.isGrounded && !this.isSwimming && !this.playerState.isClimbing,
-    });
+    // Guard effDt > 1e-4 so a tab-resume 0-dt frame never snaps the run gait to idle.
+    if (effDt > 1e-4) {
+      const pdx = cur.x - this.lastAnimPos.x;
+      const pdz = cur.z - this.lastAnimPos.z;
+      this.lastAnimPos.copy(cur);
+      const groundSpeed = Math.min(30, Math.hypot(pdx, pdz) / effDt);
+      let turnDelta = this.playerModel.group.rotation.y - this.lastAnimYaw;
+      while (turnDelta > Math.PI) turnDelta -= Math.PI * 2;
+      while (turnDelta < -Math.PI) turnDelta += Math.PI * 2;
+      this.lastAnimYaw = this.playerModel.group.rotation.y;
+      const atHelm = Boolean(this.atHelmShipId);
+      this.playerModel.character.update(effDt, {
+        speed: atHelm ? 0 : groundSpeed * 0.52,
+        turnRate: turnDelta / effDt,
+        crouching: this.isCrouching && !this.isSwimming,
+        swimming: this.isSwimming,
+        blocking: this.input.isBlocking() && !atHelm,
+        airborne: !this.isGrounded && !this.isSwimming && !this.playerState.isClimbing,
+      });
+    }
 
     // 3. Sky, Weather, Ocean & Lights Update
     if (!this.activeDungeon) {
@@ -3399,6 +3478,7 @@ export class WorldEngine {
     this.oceanSurface.dispose();
     this.vegetation.dispose();
     this.livingSettlements.dispose();
+    this.settlements.dispose();
     this.skyWeather.dispose();
     this.particlePool.dispose();
     this.pipeline.dispose();

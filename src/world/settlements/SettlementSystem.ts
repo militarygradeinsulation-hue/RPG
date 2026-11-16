@@ -16,11 +16,11 @@ import { buildSettlement, NpcRole, NpcSlot, SettlementData } from './Settlement'
  *  - Villagers spawn only near the player and follow simple daily routines.
  */
 
-const LOAD_RADIUS = 620;
-const UNLOAD_RADIUS = 760;
-const PEOPLE_RADIUS = 150;
-const PEOPLE_DESPAWN = 210;
-const BUILD_BUDGET_MS = 4;
+const LOAD_RADIUS = 420;
+const UNLOAD_RADIUS = 520;
+const PEOPLE_RADIUS = 140;
+const PEOPLE_DESPAWN = 195;
+const BUILD_BUDGET_MS = 1.8;
 
 const FIRST_M = ['Aldric', 'Bran', 'Cedric', 'Doran', 'Edmund', 'Fenn', 'Gareth', 'Hugh', 'Ivo', 'Jory', 'Kael', 'Leof', 'Merek', 'Niall', 'Osric', 'Piers', 'Rowan', 'Sten', 'Tobin', 'Ulric', 'Wat', 'Alaric', 'Bertram', 'Corwin', 'Dunstan'];
 const FIRST_F = ['Ada', 'Brynn', 'Cora', 'Della', 'Elsa', 'Freya', 'Gwen', 'Hilde', 'Isolde', 'Juna', 'Kara', 'Liesel', 'Maud', 'Nessa', 'Orla', 'Petra', 'Rhea', 'Sigrid', 'Tamsin', 'Una', 'Wren', 'Agnes', 'Beatrix', 'Clover', 'Edith'];
@@ -62,6 +62,8 @@ interface LoadedSettlement {
   data: SettlementData | null;
   gen: Generator<void, SettlementData, void> | null;
   villagers: Villager[];
+  pendingSlots: NpcSlot[] | null;
+  villagerRand: Rand | null;
   discovered: boolean;
 }
 
@@ -130,7 +132,15 @@ export class SettlementSystem {
       const wanted = settlementsNear(px, pz, LOAD_RADIUS);
       for (const site of wanted) {
         if (!this.loaded.has(site.id)) {
-          this.loaded.set(site.id, { site, data: null, gen: buildSettlement(site, this.materials), villagers: [], discovered: false });
+          this.loaded.set(site.id, {
+            site,
+            data: null,
+            gen: buildSettlement(site, this.materials),
+            villagers: [],
+            pendingSlots: null,
+            villagerRand: null,
+            discovered: false,
+          });
         }
       }
       for (const [id, l] of this.loaded) {
@@ -138,27 +148,39 @@ export class SettlementSystem {
       }
     }
 
-    // 2. advance builds within the time budget, nearest first
-    const t0 = performance.now();
-    const pending = Array.from(this.loaded.values())
-      .filter((l) => l.gen)
-      .sort((a, b) => Math.hypot(a.site.x - px, a.site.z - pz) - Math.hypot(b.site.x - px, b.site.z - pz));
-    for (const l of pending) {
-      while (l.gen && performance.now() - t0 < BUILD_BUDGET_MS) {
-        const r = l.gen.next();
-        if (r.done) {
-          l.data = r.value;
-          l.gen = null;
-          this.group.add(l.data.group);
-        }
+    // 2. advance builds within the time budget, nearest first (only allocate sort list when builds are pending)
+    let hasPendingBuild = false;
+    for (const l of this.loaded.values()) {
+      if (l.gen) {
+        hasPendingBuild = true;
+        break;
       }
-      if (performance.now() - t0 >= BUILD_BUDGET_MS) break;
+    }
+    if (hasPendingBuild) {
+      const t0 = performance.now();
+      const pending = Array.from(this.loaded.values())
+        .filter((l) => l.gen)
+        .sort((a, b) => Math.hypot(a.site.x - px, a.site.z - pz) - Math.hypot(b.site.x - px, b.site.z - pz));
+      for (const l of pending) {
+        while (l.gen && performance.now() - t0 < BUILD_BUDGET_MS) {
+          const r = l.gen.next();
+          if (r.done) {
+            l.data = r.value;
+            l.gen = null;
+            this.group.add(l.data.group);
+            this.colliderKey = '';
+          }
+        }
+        if (performance.now() - t0 >= BUILD_BUDGET_MS) break;
+      }
     }
 
     // 3. place groups, people, discovery, interiors
     this.current = null;
     let inside: BuildingRecord | null = null;
+    let insideBIdx = -1;
     let insideSettlement: LoadedSettlement | null = null;
+    let spawnedVillagerThisFrame = false;
     for (const l of this.loaded.values()) {
       if (!l.data) continue;
       l.data.group.position.set(this.origin.toLocalX(l.site.x), 0, this.origin.toLocalZ(l.site.z));
@@ -171,7 +193,8 @@ export class SettlementSystem {
         }
         const lx = px - l.site.x;
         const lz = pz - l.site.z;
-        for (const b of l.data.buildings) {
+        for (let bi = 0; bi < l.data.buildings.length; bi++) {
+          const b = l.data.buildings[bi];
           const c = Math.cos(b.rot);
           const s = Math.sin(b.rot);
           const dx = lx - b.x;
@@ -180,14 +203,24 @@ export class SettlementSystem {
           const uz = dx * s + dz * c;
           if (Math.abs(ux) < b.w / 2 - 0.15 && Math.abs(uz) < b.d / 2 - 0.15) {
             inside = b;
+            insideBIdx = bi;
             insideSettlement = l;
             break;
           }
         }
       }
-      // people
-      if (d < PEOPLE_RADIUS && l.villagers.length === 0 && l.data.npcSlots.length) this.spawnVillagers(l);
-      else if (d > PEOPLE_DESPAWN && l.villagers.length) this.despawnVillagers(l);
+      // people: stagger procedural character creation to at most 1 per frame to prevent frame freezes
+      if (d < PEOPLE_RADIUS) {
+        if (l.villagers.length === 0 && !l.pendingSlots && l.data.npcSlots.length) {
+          this.queueVillagers(l);
+        }
+        if (!spawnedVillagerThisFrame && l.pendingSlots && l.pendingSlots.length > 0) {
+          this.spawnNextVillager(l);
+          spawnedVillagerThisFrame = true;
+        }
+      } else if (d > PEOPLE_DESPAWN && (l.villagers.length > 0 || l.pendingSlots)) {
+        this.despawnVillagers(l);
+      }
       for (const v of l.villagers) this.updateVillager(v, l, dt, px, pz, night);
     }
 
@@ -207,13 +240,39 @@ export class SettlementSystem {
       this.interiorLight.intensity = THREE.MathUtils.lerp(this.interiorLight.intensity, 0, Math.min(1, dt * 6));
     }
 
-    // 5. colliders for settlements close to the player
-    const near = Array.from(this.loaded.values()).filter((l) => l.data && Math.hypot(l.site.x - px, l.site.z - pz) < l.site.radius + 70);
-    const key = near.map((l) => l.site.id).join('|');
+    // 5. spatial collider window: keep only colliders within 26m of the player (recomputed per 8m cell or interior change)
+    const pCellX = Math.floor(px / 8);
+    const pCellZ = Math.floor(pz / 8);
+    const insideKey = insideSettlement ? `${insideSettlement.site.id}:${insideBIdx}` : 'out';
+    const key = `${pCellX},${pCellZ}|${insideKey}`;
     if (key !== this.colliderKey) {
       this.colliderKey = key;
-      this.colliders = [];
-      for (const l of near) for (const c of l.data!.colliders) this.colliders.push({ x: l.site.x + c.x, z: l.site.z + c.z, radius: c.r });
+      this.colliders.length = 0;
+      const winCx = (pCellX + 0.5) * 8;
+      const winCz = (pCellZ + 0.5) * 8;
+      const windowRadius = 26;
+      const windowSq = windowRadius * windowRadius;
+      for (const l of this.loaded.values()) {
+        if (!l.data) continue;
+        if (Math.hypot(l.site.x - winCx, l.site.z - winCz) > l.site.radius + windowRadius + 16) continue;
+        const isCurrentSettle = l === insideSettlement;
+        for (let i = 0; i < l.data.colliders.length; i++) {
+          const c = l.data.colliders[i];
+          const wx = l.site.x + c.x;
+          const wz = l.site.z + c.z;
+          const dx = wx - winCx;
+          const dz = wz - winCz;
+          if (dx * dx + dz * dz > windowSq) continue;
+          const inCutawayBuilding = isCurrentSettle && insideBIdx >= 0 && c.bIdx === insideBIdx;
+          this.colliders.push({
+            x: wx,
+            z: wz,
+            radius: c.r,
+            height: c.h ?? 3.6,
+            blocksCamera: Boolean(c.cam) && !inCutawayBuilding,
+          });
+        }
+      }
     }
     this.globalBarkCd = Math.max(0, this.globalBarkCd - dt);
   }
@@ -270,44 +329,58 @@ export class SettlementSystem {
     }
   }
 
-  private spawnVillagers(l: LoadedSettlement) {
+  private queueVillagers(l: LoadedSettlement) {
     const data = l.data!;
-    const rand = makeRand(l.site.seed + 77);
+    l.villagerRand = makeRand(l.site.seed + 77);
     // cap the crowd for performance; important roles first
     const order: NpcRole[] = ['lord', 'smith', 'innkeeper', 'priest', 'merchant', 'guard', 'villager', 'farmer'];
-    const slots = [...data.npcSlots].sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role)).slice(0, l.site.type === 'town' ? 14 : l.site.type === 'castle' ? 10 : l.site.type === 'village' ? 9 : 5);
-    for (const slot of slots) {
-      const look = this.lookFor(slot.role, rand, data.banner);
-      const female = look.sex === 'f';
-      const char = createCharacter(look as Record<string, unknown>);
-      const g = new THREE.Group();
-      g.add(char.root);
-      this.group.add(g);
-      const wx = l.site.x + slot.x;
-      const wz = l.site.z + slot.z;
-      l.villagers.push({
-        name: `${rand.pick(female ? FIRST_F : FIRST_M)}${slot.role === 'villager' || slot.role === 'farmer' ? '' : ' the ' + (slot.role === 'innkeeper' ? 'Innkeeper' : slot.role[0].toUpperCase() + slot.role.slice(1))}`,
-        role: slot.role,
-        char,
-        group: g,
-        x: wx,
-        z: wz,
-        yaw: slot.face,
-        slot,
-        target: null,
-        path: [],
-        wait: rand.range(0, 4),
-        speed: rand.range(1.15, 1.5),
-        barkCd: rand.range(0, 6),
-        actionCd: rand.range(1, 3),
-        lastX: wx,
-        lastZ: wz,
-        animAcc: 0,
-      });
+    const cap = l.site.type === 'town' ? 12 : l.site.type === 'castle' ? 9 : l.site.type === 'village' ? 8 : 5;
+    l.pendingSlots = [...data.npcSlots].sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role)).slice(0, cap);
+  }
+
+  private spawnNextVillager(l: LoadedSettlement) {
+    if (!l.data || !l.pendingSlots || l.pendingSlots.length === 0) {
+      l.pendingSlots = null;
+      return;
     }
+    const slot = l.pendingSlots.shift()!;
+    if (l.pendingSlots.length === 0) l.pendingSlots = null;
+    const rand = l.villagerRand ?? makeRand(l.site.seed + 77);
+    const look = this.lookFor(slot.role, rand, l.data.banner);
+    const female = look.sex === 'f';
+    const char = createCharacter(look as Record<string, unknown>);
+    const g = new THREE.Group();
+    g.add(char.root);
+    this.group.add(g);
+    const wx = l.site.x + slot.x;
+    const wz = l.site.z + slot.z;
+    const gy = groundHeightAt(wx, wz);
+    g.position.set(this.origin.toLocalX(wx), gy, this.origin.toLocalZ(wz));
+    g.rotation.y = slot.face;
+    l.villagers.push({
+      name: `${rand.pick(female ? FIRST_F : FIRST_M)}${slot.role === 'villager' || slot.role === 'farmer' ? '' : ' the ' + (slot.role === 'innkeeper' ? 'Innkeeper' : slot.role[0].toUpperCase() + slot.role.slice(1))}`,
+      role: slot.role,
+      char,
+      group: g,
+      x: wx,
+      z: wz,
+      yaw: slot.face,
+      slot,
+      target: null,
+      path: [],
+      wait: rand.range(0, 4),
+      speed: rand.range(1.15, 1.5),
+      barkCd: rand.range(0, 6),
+      actionCd: rand.range(1, 3),
+      lastX: wx,
+      lastZ: wz,
+      animAcc: 0,
+    });
   }
 
   private despawnVillagers(l: LoadedSettlement) {
+    l.pendingSlots = null;
+    l.villagerRand = null;
     for (const v of l.villagers) {
       this.group.remove(v.group);
       v.char.dispose();

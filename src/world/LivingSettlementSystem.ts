@@ -15,6 +15,19 @@ interface ActiveSettlement {
   originHeight: number;
   residentLocations: { x: number; z: number }[];
 }
+interface InFlightSettlementBuild {
+  key: string;
+  plan: SettlementPlan;
+  root: THREE.Group;
+  roofs: ActiveSettlement['roofs'];
+  originHeight: number;
+  nextBuildingIndex: number;
+}
+
+const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
+const UNIT_CONE = new THREE.ConeGeometry(2.4, 3.2, 8);
+const UNIT_OCTA = new THREE.OctahedronGeometry(0.8, 0);
+
 export class LivingSettlementSystem {
   public readonly group = new THREE.Group();
   private readonly active = new Map<string, ActiveSettlement>();
@@ -28,9 +41,10 @@ export class LivingSettlementSystem {
   private readonly residentBodyMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.96 });
   private readonly residentHeadMat = new THREE.MeshStandardMaterial({ color: 0xd8b8a0, roughness: 0.94 });
   private lastResidentStep = 0;
-  private lastSettlementBuild = 0;
   private readonly pendingSites = new Map<string, SettlementPlan>();
+  private inFlight: InFlightSettlementBuild | null = null;
   private readonly residentDummy = new THREE.Object3D();
+  private readonly residentColor = new THREE.Color();
   private readonly localBuildings: BuildingPlan[] = [];
   private lastCollisionCellX = Number.NaN;
   private lastCollisionCellZ = Number.NaN;
@@ -80,7 +94,6 @@ export class LivingSettlementSystem {
       if (!merged) continue;
       for (const mesh of meshes) {
         group.remove(mesh);
-        mesh.geometry.dispose();
       }
       const combined = new THREE.Mesh(merged, material);
       combined.castShadow = meshes.some(mesh => mesh.castShadow);
@@ -104,7 +117,8 @@ export class LivingSettlementSystem {
 
     const box = (width: number, tall: number, depth: number,
       x: number, yy: number, z: number, material: THREE.Material, parent: THREE.Group = group) => {
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, tall, depth), material);
+      const mesh = new THREE.Mesh(UNIT_BOX, material);
+      mesh.scale.set(width, tall, depth);
       mesh.position.set(x, yy, z);
       mesh.castShadow = tall > 1;
       mesh.receiveShadow = true;
@@ -165,7 +179,7 @@ export class LivingSettlementSystem {
         box(1.15, 1.45, 1.15, sx * (w - 1) * 0.5, height + 0.85, sz * (d - 1) * 0.5, wall, roof);
       }
       if (plan.kind === 'keep') {
-        const crown = new THREE.Mesh(new THREE.ConeGeometry(2.4, 3.2, 8), roofMat);
+        const crown = new THREE.Mesh(UNIT_CONE, roofMat);
         crown.position.set(0, height + 2, 0);
         crown.castShadow = true;
         roof.add(crown);
@@ -177,16 +191,19 @@ export class LivingSettlementSystem {
       const halfSpan = (w + 0.8) * 0.5;
       const slopeLength = Math.hypot(halfSpan, pitch);
       const slopeAngle = Math.atan2(pitch, halfSpan);
-      const roofLeft = new THREE.Mesh(new THREE.BoxGeometry(slopeLength, 0.24, d + 1.05), roofMat);
+      const roofLeft = new THREE.Mesh(UNIT_BOX, roofMat);
+      roofLeft.scale.set(slopeLength, 0.24, d + 1.05);
       roofLeft.position.set(-halfSpan * 0.5, height + pitch * 0.5, 0);
       roofLeft.rotation.z = slopeAngle;
       roofLeft.castShadow = true;
       roofLeft.receiveShadow = true;
       roof.add(roofLeft);
-      const roofRight = roofLeft.clone();
-      roofRight.geometry = roofLeft.geometry.clone();
-      roofRight.position.x = halfSpan * 0.5;
+      const roofRight = new THREE.Mesh(UNIT_BOX, roofMat);
+      roofRight.scale.set(slopeLength, 0.24, d + 1.05);
+      roofRight.position.set(halfSpan * 0.5, height + pitch * 0.5, 0);
       roofRight.rotation.z = -slopeAngle;
+      roofRight.castShadow = true;
+      roofRight.receiveShadow = true;
       roof.add(roofRight);
       // Ridge cap, exposed oak gable, and offset chimney.
       box(0.32, 0.32, d + 1.12, 0, height + pitch, 0, this.timber, roof);
@@ -203,7 +220,7 @@ export class LivingSettlementSystem {
       box(0.7, 0.7, 0.08, w * 0.3, 2.25, d * 0.58, this.glassMat);
     }
     if (plan.kind === 'chapel') {
-      const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.8, 0), this.glassMat);
+      const crystal = new THREE.Mesh(UNIT_OCTA, this.glassMat);
       crystal.position.y = height + 3.3;
       group.add(crystal);
     }
@@ -212,34 +229,44 @@ export class LivingSettlementSystem {
     return { group, roof };
   }
 
-  private makeSettlement(plan: SettlementPlan, originX: number, originZ: number): ActiveSettlement {
-    const root = new THREE.Group();
-    const roofs: ActiveSettlement['roofs'] = [];
-    for (const building of plan.buildings) {
-      const built = this.buildBuilding(building, plan.style);
-      root.add(built.group);
-      roofs.push({ mesh: built.roof, x: building.x, z: building.z, radius: Math.max(building.width, building.depth) * 0.8 });
-    }
-    // Compact wandering citizens: two instanced draw calls per settlement,
-    // with unique tunic colors and no heavy skeletal animation per resident.
+  private disposeSettlementGroup(root: THREE.Group): void {
+    root.traverse(obj => {
+      if (
+        obj instanceof THREE.Mesh &&
+        !(obj instanceof THREE.InstancedMesh) &&
+        obj.geometry !== UNIT_BOX &&
+        obj.geometry !== UNIT_CONE &&
+        obj.geometry !== UNIT_OCTA
+      ) {
+        obj.geometry.dispose();
+      }
+    });
+  }
+
+  private finalizeInFlight(build: InFlightSettlementBuild, originX: number, originZ: number): ActiveSettlement {
+    const { plan, root, roofs, originHeight } = build;
     const count = Math.min(12, plan.residents);
     const body = new THREE.InstancedMesh(this.residentBodyGeo, this.residentBodyMat, count);
     const heads = new THREE.InstancedMesh(this.residentHeadGeo, this.residentHeadMat, count);
     body.frustumCulled = false;
     heads.frustumCulled = false;
-    root.position.set(plan.x - originX, groundHeightAt(plan.x, plan.z), plan.z - originZ);
-    root.add(body, heads);
-    // Buildings use absolute placement before being added to the settlement
-    // root; convert them once into coordinates relative to that root.
+    root.position.set(plan.x - originX, originHeight, plan.z - originZ);
     for (const child of root.children) {
-      if (child !== body && child !== heads) {
-        child.position.x -= plan.x;
-        child.position.y -= groundHeightAt(plan.x, plan.z);
-        child.position.z -= plan.z;
-      }
+      child.position.x -= plan.x;
+      child.position.y -= originHeight;
+      child.position.z -= plan.z;
     }
+    root.add(body, heads);
     this.group.add(root);
-    return { plan, group: root, roofs, residents: body, residentHeads: heads, originHeight: groundHeightAt(plan.x, plan.z), residentLocations: Array.from({ length: count }, () => ({ x: plan.x, z: plan.z })) };
+    return {
+      plan,
+      group: root,
+      roofs,
+      residents: body,
+      residentHeads: heads,
+      originHeight,
+      residentLocations: Array.from({ length: count }, () => ({ x: plan.x, z: plan.z })),
+    };
   }
 
   public update(worldX: number, worldZ: number, originX: number, originZ: number): void {
@@ -254,25 +281,25 @@ export class LivingSettlementSystem {
       for (const [key, site] of this.active) {
         if (!wanted.has(key)) {
           this.group.remove(site.group);
-          site.group.traverse(obj => {
-            if (obj instanceof THREE.Mesh && !(obj instanceof THREE.InstancedMesh)) obj.geometry.dispose();
-          });
+          this.disposeSettlementGroup(site.group);
           this.active.delete(key);
         }
       }
+      if (this.inFlight && !wanted.has(this.inFlight.key)) {
+        this.disposeSettlementGroup(this.inFlight.root);
+        this.inFlight = null;
+      }
       this.pendingSites.clear();
       for (const [key, plan] of wanted) {
-        if (!this.active.has(key)) this.pendingSites.set(key, plan);
+        if (!this.active.has(key) && this.inFlight?.key !== key) this.pendingSites.set(key, plan);
       }
       this.lastCollisionCellX = Number.NaN;
       this.visibleSettlements.length = 0;
       this.visibleSettlements.push(...Array.from(this.active.values(), site => site.plan));
     }
 
-    // Generate only one settlement per ~90 ms, nearest first. Prevent a
-    // sudden multi-village geometry spike when crossing a cell boundary.
-    const buildTime = performance.now();
-    if (this.pendingSites.size && buildTime - this.lastSettlementBuild >= 90) {
+    // Build at most ONE building per frame so village streaming never spikes frame time.
+    if (!this.inFlight && this.pendingSites.size > 0) {
       let selected: SettlementPlan | null = null;
       let selectedKey = '';
       let closest = Infinity;
@@ -287,11 +314,37 @@ export class LivingSettlementSystem {
         }
       }
       if (selected) {
-        this.active.set(selectedKey, this.makeSettlement(selected, originX, originZ));
-        this.lastCollisionCellX = Number.NaN;
         this.pendingSites.delete(selectedKey);
-        this.lastSettlementBuild = buildTime;
-        this.visibleSettlements.push(selected);
+        this.inFlight = {
+          key: selectedKey,
+          plan: selected,
+          root: new THREE.Group(),
+          roofs: [],
+          originHeight: groundHeightAt(selected.x, selected.z),
+          nextBuildingIndex: 0,
+        };
+      }
+    }
+
+    if (this.inFlight) {
+      const bIdx = this.inFlight.nextBuildingIndex;
+      if (bIdx < this.inFlight.plan.buildings.length) {
+        const building = this.inFlight.plan.buildings[bIdx];
+        const built = this.buildBuilding(building, this.inFlight.plan.style);
+        this.inFlight.root.add(built.group);
+        this.inFlight.roofs.push({
+          mesh: built.roof,
+          x: building.x,
+          z: building.z,
+          radius: Math.max(building.width, building.depth) * 0.8,
+        });
+        this.inFlight.nextBuildingIndex++;
+      } else {
+        const completed = this.finalizeInFlight(this.inFlight, originX, originZ);
+        this.active.set(this.inFlight.key, completed);
+        this.visibleSettlements.push(this.inFlight.plan);
+        this.lastCollisionCellX = Number.NaN;
+        this.inFlight = null;
       }
     }
 
@@ -314,7 +367,7 @@ export class LivingSettlementSystem {
           this.residentDummy.scale.setScalar(0.82 + ((i + site.plan.style) % 4) * 0.07);
           this.residentDummy.updateMatrix();
           site.residents.setMatrixAt(i, this.residentDummy.matrix);
-          site.residents.setColorAt(i, new THREE.Color().setHSL(
+          site.residents.setColorAt(i, this.residentColor.setHSL(
             (i * 0.15 + site.plan.style * 0.09) % 1, 0.34, 0.42
           ));
           this.residentDummy.position.y = y + 2.15;
@@ -416,9 +469,11 @@ export class LivingSettlementSystem {
   public dispose(): void {
     for (const site of this.active.values()) {
       this.group.remove(site.group);
-      site.group.traverse(obj => {
-        if (obj instanceof THREE.Mesh && !(obj instanceof THREE.InstancedMesh)) obj.geometry.dispose();
-      });
+      this.disposeSettlementGroup(site.group);
+    }
+    if (this.inFlight) {
+      this.disposeSettlementGroup(this.inFlight.root);
+      this.inFlight = null;
     }
     this.active.clear();
     this.pendingSites.clear();

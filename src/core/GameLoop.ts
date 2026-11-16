@@ -8,7 +8,7 @@ export class FixedStepLoop {
   private smoothedFrameMs = 16.6;
   public readonly fixedDt: number;
   private readonly maxFrameDt = 0.05;
-  private readonly resumeThresholdMs = 250;
+  private readonly resumeThresholdMs = 1000;
   private readonly maxStepsPerFrame = 4;
 
   constructor(fixedHz = 60) {
@@ -36,7 +36,7 @@ export class FixedStepLoop {
       onRender(0, 1, this.smoothedFrameMs);
       return;
     }
-    this.smoothedFrameMs = this.smoothedFrameMs * 0.9 + Math.max(0.5, rawMs) * 0.1;
+    this.smoothedFrameMs = this.smoothedFrameMs * 0.9 + Math.min(100, Math.max(0.5, rawMs)) * 0.1;
 
     const frameDt = Math.min(this.maxFrameDt, rawMs / 1000);
     this.accumulator += frameDt;

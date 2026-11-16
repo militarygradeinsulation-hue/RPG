@@ -1,4 +1,4 @@
-import { getBiomeAt, groundHeightAt, hash2, NAMED_ISLANDS } from './TerrainHeightfield';
+import { getBiomeAt, groundHeightAt, hash2, NAMED_ISLANDS, settlementsNear } from './TerrainHeightfield';
 import type { BiomeId } from '../types/game';
 
 export const SETTLEMENT_CELL_SIZE = 180;
@@ -90,7 +90,8 @@ export function settlementsForCell(cx: number, cz: number): SettlementPlan[] {
   const nearAuthored = NAMED_ISLANDS.some(isle => Math.hypot(x - isle.x, z - isle.z) < isle.radius + 85);
   const onMainland = Math.hypot(x, z) > 155;
   if (seed > 0.23 && onMainland && !nearAuthored &&
-      groundHeightAt(x, z) > 2 && groundHeightAt(x + 12, z + 12) > 0.9) {
+      groundHeightAt(x, z) > 2 && groundHeightAt(x + 12, z + 12) > 0.9 &&
+      settlementsNear(x, z, 175).length === 0) {
     sites.push(buildPlan(`settlement:${cx}:${cz}`, x, z, seed, false));
   }
   for (const island of NAMED_ISLANDS) {
