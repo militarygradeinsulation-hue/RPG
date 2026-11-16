@@ -132,6 +132,21 @@ export class LivingSettlementSystem {
         box(0.52, 0.8, 0.06, u, floor * 3.3 + 1.7, -d * 0.5 - 0.2, this.glassMat);
       }
     }
+    // Recessed entrance trim and facade framing mark actual walk-in openings.
+    for (const side of [-1, 1]) {
+      box(0.17, 2.85, 0.24, side * (doorW * 0.5 + 0.08), 1.39, d * 0.5 + 0.07, this.timber);
+    }
+    box(doorW + 0.3, 0.19, 0.26, 0, 2.72, d * 0.5 + 0.07, this.timber);
+    // Side-window rhythm differs by floor and facade proportions.
+    for (let floor = 0; floor < levels; floor++) {
+      for (const side of [-1, 1]) {
+        const windowZ = -d * (0.12 + 0.12 * (Math.floor(plan.seed * 5) % 2));
+        const window = box(0.06, 0.7, 0.6, side * (w * 0.5 + 0.21),
+          floor * 3.3 + 1.68, windowZ, this.glassMat);
+        window.castShadow = false;
+      }
+    }
+
     // Furnished, lit interior. No extra real-time lights or texture downloads.
     const furnitureCount = plan.kind === 'inn' ? 4 : plan.kind === 'keep' ? 5 : 2;
     for (let i = 0; i < furnitureCount; i++) {
@@ -156,12 +171,29 @@ export class LivingSettlementSystem {
         roof.add(crown);
       }
     } else {
-      const ridge = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.74, 2.4 + plan.seed, 4), roofMat);
-      ridge.rotation.y = Math.PI / 4 + (plan.seed > 0.5 ? Math.PI / 2 : 0);
-      ridge.position.y = height + 1;
-      ridge.castShadow = true;
-      roof.add(ridge);
-      box(0.8, 2.8, 0.8, w * 0.28, height + 0.8, -d * 0.2, wall, roof);
+      // Real pitched rafters instead of a repeated cone silhouette.
+      // Ridge follows the length of the building and slope changes with seed.
+      const pitch = 1.8 + plan.seed * 1.55;
+      const halfSpan = (w + 0.8) * 0.5;
+      const slopeLength = Math.hypot(halfSpan, pitch);
+      const slopeAngle = Math.atan2(pitch, halfSpan);
+      const roofLeft = new THREE.Mesh(new THREE.BoxGeometry(slopeLength, 0.24, d + 1.05), roofMat);
+      roofLeft.position.set(-halfSpan * 0.5, height + pitch * 0.5, 0);
+      roofLeft.rotation.z = slopeAngle;
+      roofLeft.castShadow = true;
+      roofLeft.receiveShadow = true;
+      roof.add(roofLeft);
+      const roofRight = roofLeft.clone();
+      roofRight.geometry = roofLeft.geometry.clone();
+      roofRight.position.x = halfSpan * 0.5;
+      roofRight.rotation.z = -slopeAngle;
+      roof.add(roofRight);
+      // Ridge cap, exposed oak gable, and offset chimney.
+      box(0.32, 0.32, d + 1.12, 0, height + pitch, 0, this.timber, roof);
+      box(0.8, 2.25, 0.8, w * 0.26, height + pitch * 0.62, -d * 0.2, wall, roof);
+      if (plan.kind === 'workshop') {
+        box(w * 0.55, 0.3, 2.6, 0, height - 0.8, d * 0.56, this.timber, roof);
+      }
     }
     group.add(roof);
 
