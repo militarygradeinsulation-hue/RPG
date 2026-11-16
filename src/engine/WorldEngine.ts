@@ -331,6 +331,8 @@ export class WorldEngine {
 
   // Locomotion, Combat & Camera
   private velocityY = 0;
+  private smoothedMoveX = 0;
+  private smoothedMoveZ = 0;
   private isGrounded = true;
   private isCrouching = false;
   private isSwimming = false;
@@ -1039,6 +1041,10 @@ export class WorldEngine {
 
   public setGameMode(mode: EngineGameMode) {
     this.gameMode = mode;
+    if (mode !== 'playing') {
+      this.smoothedMoveX = 0;
+      this.smoothedMoveZ = 0;
+    }
     this.input.setEnabled(mode === 'playing');
   }
 
@@ -2407,8 +2413,18 @@ export class WorldEngine {
               ? 12.6 * compBonus
               : 7.8 * compBonus;
 
-    const dirX = this.dodgeTimer > 0 ? this.dodgeDirX : moveDirX;
-    const dirZ = this.dodgeTimer > 0 ? this.dodgeDirZ : moveDirZ;
+    // Damped direction control keeps starts, stops and keyboard diagonals
+    // responsive without instantaneous velocity changes. The fixed-step
+    // coefficient gives the same feel at different monitor refresh rates.
+    const moveBlend = 1 - Math.exp(-dt * (len > 0 ? 15 : 21));
+    this.smoothedMoveX += (moveDirX - this.smoothedMoveX) * moveBlend;
+    this.smoothedMoveZ += (moveDirZ - this.smoothedMoveZ) * moveBlend;
+    if (len === 0 && Math.hypot(this.smoothedMoveX, this.smoothedMoveZ) < 0.002) {
+      this.smoothedMoveX = 0;
+      this.smoothedMoveZ = 0;
+    }
+    const dirX = this.dodgeTimer > 0 ? this.dodgeDirX : this.smoothedMoveX;
+    const dirZ = this.dodgeTimer > 0 ? this.dodgeDirZ : this.smoothedMoveZ;
 
     const res = stepPlayerPhysics({
       dt,
@@ -2470,8 +2486,8 @@ export class WorldEngine {
     }
 
     // Smoothly turn player character toward travel direction
-    if (len > 0 && this.dodgeTimer <= 0) {
-      const targetRot = Math.atan2(moveDirX, moveDirZ);
+    if (Math.hypot(dirX, dirZ) > 0.08 && this.dodgeTimer <= 0) {
+      const targetRot = Math.atan2(dirX, dirZ);
       let diff = targetRot - this.playerModel.group.rotation.y;
       while (diff > Math.PI) diff -= Math.PI * 2;
       while (diff < -Math.PI) diff += Math.PI * 2;
