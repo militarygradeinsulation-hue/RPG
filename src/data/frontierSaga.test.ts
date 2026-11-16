@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { INITIAL_OUTPOSTS, INITIAL_QUESTS, ITEMS } from './worldData';
 import { test } from 'node:test';
-import { FRONTIER_QUESTS, FRONTIER_DISCOVERY_QUESTS, FRONTIER_REQUIRED_QUESTS, mergeOutpostCatalog, mergeQuestCatalog, advanceFrontierDiscovery, unlockFrontierFinale } from './frontierSaga';
+import { FRONTIER_QUESTS, FRONTIER_DISCOVERY_QUESTS, FRONTIER_REQUIRED_QUESTS, FRONTIER_GUARDIAN_QUESTS, advanceFrontierGuardian, mergeOutpostCatalog, mergeQuestCatalog, advanceFrontierDiscovery, unlockFrontierFinale } from './frontierSaga';
 
 test('all four outer islands have one valid discovery storyline', () => {
   const regional = FRONTIER_QUESTS.filter((quest) => quest.id !== 'quest_frontier_crown');
@@ -64,4 +64,16 @@ test('existing built outposts survive when new island settlements are installed'
   for (const id of ['outpost_moonveil', 'outpost_thornwild', 'outpost_ashen', 'outpost_storm']) {
     assert.ok(merged.find(o => o.id === id), `Missing frontier settlement ${id}`);
   }
+});
+
+test('guardians gate each frontier decision and cannot unlock undiscovered quests', () => {
+  const fresh = mergeQuestCatalog(undefined, FRONTIER_QUESTS);
+  assert.equal(advanceFrontierGuardian(fresh, 'guardian_moonveil').find(q => q.id === 'quest_moonveil')?.step, 0);
+  const discovered = advanceFrontierDiscovery(fresh, 'poi_isle_moonveil');
+  assert.equal(discovered.find(q => q.id === 'quest_moonveil')?.step, 1);
+  const won = advanceFrontierGuardian(discovered, 'guardian_moonveil');
+  assert.equal(won.find(q => q.id === 'quest_moonveil')?.step, 2);
+  assert.equal(won.find(q => q.id === 'quest_thornwild')?.step, 0);
+  assert.equal(Object.keys(FRONTIER_GUARDIAN_QUESTS).length, 4);
+  assert.ok(FRONTIER_QUESTS.filter(q => q.id !== 'quest_frontier_crown').every(q => q.maxSteps === 3));
 });
