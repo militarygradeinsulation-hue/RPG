@@ -82,6 +82,27 @@ export function settlementsForCell(cx: number, cz: number): SettlementPlan[] {
         Math.floor(island.z / SETTLEMENT_CELL_SIZE) !== cz) continue;
     sites.push(buildPlan(`settlement:${island.id}`, island.x, island.z, 0.7, true));
   }
+  // The terrain engine also produces seeded islands forever beyond the
+  // authored archipelago. Recover those exact centers from its 220m lattice
+  // and populate suitable land with settlements. Never spawn on open water.
+  const fract = (n: number) => n - Math.floor(n);
+  const minX = cx * SETTLEMENT_CELL_SIZE;
+  const maxX = minX + SETTLEMENT_CELL_SIZE;
+  const minZ = cz * SETTLEMENT_CELL_SIZE;
+  const maxZ = minZ + SETTLEMENT_CELL_SIZE;
+  for (let iz = Math.floor(minZ / 220) - 1; iz <= Math.floor(maxZ / 220) + 1; iz++) {
+    for (let ix = Math.floor(minX / 220) - 1; ix <= Math.floor(maxX / 220) + 1; ix++) {
+      const islandSeed = hash2(ix * 3.17, iz * 7.41);
+      if (islandSeed <= 0.56) continue;
+      const islandX = (ix + 0.25 + fract(islandSeed * 13.7) * 0.5) * 220;
+      const islandZ = (iz + 0.25 + fract(islandSeed * 29.3) * 0.5) * 220;
+      if (islandX < minX || islandX >= maxX || islandZ < minZ || islandZ >= maxZ) continue;
+      if (!(islandZ > 240 || Math.abs(islandX) > 250)) continue;
+      if (NAMED_ISLANDS.some(island => Math.hypot(islandX - island.x, islandZ - island.z) < island.radius + 70)) continue;
+      if (groundHeightAt(islandX, islandZ) <= 1.5) continue;
+      sites.push(buildPlan(`settlement:outer:${ix}:${iz}`, islandX, islandZ, islandSeed, true));
+    }
+  }
   return sites;
 }
 
