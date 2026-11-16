@@ -219,6 +219,7 @@ export default function App() {
     initialSave?.discoveredRecipes || INITIAL_RECIPES.filter((r) => r.discovered).map((r) => r.id)
   );
   const [quests, setQuests] = useState<QuestState[]>(() => mergeQuestCatalog(initialSave?.quests, INITIAL_QUESTS));
+  const resolvingQuestIdsRef = useRef(new Set<string>());
   const [outposts, setOutposts] = useState<OutpostState[]>(() => mergeOutpostCatalog(initialSave?.outposts, INITIAL_OUTPOSTS));
   const [tradeRoutes, setTradeRoutes] = useState<TradeRouteState[]>(
     initialSave?.tradeRoutes || structuredClone(INITIAL_TRADE_ROUTES)
@@ -753,7 +754,9 @@ export default function App() {
       q.choices?.some((option) => option.id === choice.id)
     );
     const quest = quests.find((q) => q.id === questId);
-    if (!eligible || !quest || !hasVillageContractMaterials(quest, inventory)) return;
+    if (!eligible || !quest || !hasVillageContractMaterials(quest, inventory) ||
+        resolvingQuestIdsRef.current.has(questId)) return;
+    resolvingQuestIdsRef.current.add(questId);
     if (quest.requiredItemId && quest.requiredItemQty) {
       addInventoryItem(quest.requiredItemId, -quest.requiredItemQty);
     }
