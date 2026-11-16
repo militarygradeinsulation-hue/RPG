@@ -110,6 +110,11 @@ function distToSegment(px: number, pz: number, ax: number, az: number, bx: numbe
 }
 
 export function getRoadMaskAt(x: number, z: number): number {
+  return Math.max(coreRoadMaskAt(x, z), settlementStreetMaskAt(x, z));
+}
+
+/** Hand-authored core roads only (used by base terrain grading, before settlements exist). */
+function coreRoadMaskAt(x: number, z: number): number {
   // Keep shrine plaza radial stone pad
   const distCenter = Math.hypot(x, z);
   if (distCenter < 15.5) return 1.0;
@@ -146,7 +151,17 @@ export function getBiomeAt(x: number, z: number): BiomeId {
   return 'ember';
 }
 
+/**
+ * Final ground height: natural terrain plus leveled pads under procedural settlements.
+ * Pure and deterministic, so the terrain worker, physics, and placement all agree.
+ */
 export function groundHeightAt(x: number, z: number): number {
+  const base = baseGroundHeightAt(x, z);
+  return applySettlementPads(x, z, base);
+}
+
+/** Natural terrain height before settlement leveling. */
+export function baseGroundHeightAt(x: number, z: number): number {
   const distFromCenter = Math.hypot(x, z);
 
   // 1. Domain-warped organic rolling relief + snow-drifted micro terrain
@@ -275,7 +290,7 @@ export function groundHeightAt(x: number, z: number): number {
   }
 
   // Gentle road crown grading (keeps roads dry above riverbanks & walkable over hills)
-  const roadMask = getRoadMaskAt(x, z);
+  const roadMask = coreRoadMaskAt(x, z);
   if (roadMask > 0.02 && z < 84) {
     const minDry = WATER_LEVEL + 0.85;
     if (baseHeight < minDry) {
@@ -493,4 +508,229 @@ export function generateChunkBuffers(
 function zRoadCheck(wx: number, wz: number, y: number): number {
   if (y < WATER_LEVEL + 0.15) return 0;
   return getRoadMaskAt(wx, wz);
+}
+
+
+// ============================================================================
+// PROCEDURAL SETTLEMENT SITES (deterministic, worker-safe)
+// ============================================================================
+// The world beyond the hand-built core is divided into cells. Each cell may hold
+// one settlement whose type, layout, name and look all derive from the cell seed,
+// so the same place always generates the same village, on every machine.
+
+export type SettlementType = 'hamlet' | 'village' | 'town' | 'castle';
+
+export interface SettlementStreet {
+  ax: number;
+  az: number;
+  bx: number;
+  bz: number;
+  width: number;
+}
+
+export interface SettlementSite {
+  id: string;
+  cx: number;
+  cz: number;
+  x: number;
+  z: number;
+  type: SettlementType;
+  /** Leveled pad radius (m). */
+  radius: number;
+  /** Ground height of the leveled pad. */
+  padY: number;
+  /** Main street direction (radians). */
+  angle: number;
+  seed: number;
+  name: string;
+  streets: SettlementStreet[];
+}
+
+export const SETTLEMENT_CELL = 280;
+const CORE_EXCLUSION_RADIUS = 250;
+const siteCache = new Map<string, SettlementSite | null>();
+
+const NAME_A = ['Ash', 'Bram', 'Cold', 'Dun', 'Elder', 'Fen', 'Grey', 'Haw', 'Iron', 'Kings', 'Lark', 'Mire', 'North', 'Oak', 'Raven', 'Stone', 'Thorn', 'Wolf', 'Winter', 'Amber', 'Frost', 'Ember', 'Sun', 'Moss', 'Brine', 'Hollow', 'Silver', 'Black', 'White', 'Red', 'Glen', 'Hart', 'Wyn', 'Bryn', 'Crow', 'Elm', 'Fox', 'Gold', 'High', 'Low'];
+const NAME_B = ['ford', 'wick', 'holm', 'stead', 'hollow', 'vale', 'reach', 'haven', 'gate', 'moor', 'barrow', 'fell', 'crest', 'by', 'thorpe', 'watch', 'bridge', 'mere', 'field', 'wood', 'brook', 'stone', 'hearth', 'march', 'shire', 'combe', 'ridge', 'dale'];
+
+function siteRand(seed: number, n: number): number {
+  return fract(Math.sin(seed * 127.1 + n * 311.7) * 43758.5453);
+}
+
+export function settlementName(type: SettlementType, seed: number): string {
+  const a = NAME_A[Math.floor(siteRand(seed, 11) * NAME_A.length)];
+  let b = NAME_B[Math.floor(siteRand(seed, 12) * NAME_B.length)];
+  if (a.toLowerCase().endsWith(b[0])) b = NAME_B[(NAME_B.indexOf(b) + 3) % NAME_B.length];
+  const core = a + b;
+  if (type === 'castle') return siteRand(seed, 13) < 0.5 ? `Castle ${core}` : `${core} Keep`;
+  return core;
+}
+
+function buildStreets(type: SettlementType, x: number, z: number, radius: number, angle: number, seed: number): SettlementStreet[] {
+  const streets: SettlementStreet[] = [];
+  const ca = Math.cos(angle);
+  const sa = Math.sin(angle);
+  const len = radius * (type === 'hamlet' ? 0.75 : 0.95);
+  const w = type === 'town' ? 4.2 : type === 'castle' ? 4.0 : 3.2;
+  // main street (slightly bent in the middle for an organic look)
+  const bend = (siteRand(seed, 21) - 0.5) * radius * 0.18;
+  const mx = x - sa * bend;
+  const mz = z + ca * bend;
+  streets.push({ ax: x - ca * len, az: z - sa * len, bx: mx, bz: mz, width: w });
+  streets.push({ ax: mx, az: mz, bx: x + ca * len, bz: z + sa * len, width: w });
+  if (type === 'village' || type === 'town') {
+    const off = (siteRand(seed, 22) - 0.5) * radius * 0.3;
+    const cx2 = x + ca * off;
+    const cz2 = z + sa * off;
+    const l2 = len * (type === 'town' ? 0.9 : 0.6);
+    const a2 = angle + Math.PI / 2 + (siteRand(seed, 23) - 0.5) * 0.4;
+    streets.push({ ax: cx2 - Math.cos(a2) * l2, az: cz2 - Math.sin(a2) * l2, bx: cx2 + Math.cos(a2) * l2, bz: cz2 + Math.sin(a2) * l2, width: w * 0.85 });
+  }
+  if (type === 'town') {
+    // a third lane parallel to the main street
+    const off = radius * 0.42 * (siteRand(seed, 24) < 0.5 ? 1 : -1);
+    const px = x - sa * off;
+    const pz = z + ca * off;
+    const l3 = len * 0.65;
+    streets.push({ ax: px - ca * l3, az: pz - sa * l3, bx: px + ca * l3, bz: pz + sa * l3, width: w * 0.75 });
+  }
+  return streets;
+}
+
+/** Deterministic settlement (or null) for a settlement cell. */
+export function getSettlementSite(cx: number, cz: number): SettlementSite | null {
+  const key = cx + ',' + cz;
+  const cached = siteCache.get(key);
+  if (cached !== undefined) return cached;
+  const result = computeSite(cx, cz);
+  siteCache.set(key, result);
+  return result;
+}
+
+function computeSite(cx: number, cz: number): SettlementSite | null {
+  const seed = hash2(cx * 1.731 + 91.3, cz * 2.417 - 47.9) * 1000 + cx * 7.13 + cz * 3.71;
+  const roll = siteRand(seed, 1);
+  if (roll < 0.22) return null; // some wilderness cells stay wild
+  const x = (cx + 0.2 + siteRand(seed, 2) * 0.6) * SETTLEMENT_CELL;
+  const z = (cz + 0.2 + siteRand(seed, 3) * 0.6) * SETTLEMENT_CELL;
+  if (Math.hypot(x, z) < CORE_EXCLUSION_RADIUS) return null;
+  for (const isl of NAMED_ISLANDS) if (Math.hypot(x - isl.x, z - isl.z) < isl.radius + 40) return null;
+
+  const t = siteRand(seed, 4);
+  const h0 = baseGroundHeightAt(x, z);
+  if (h0 < WATER_LEVEL + 1.2) return null;
+  const mountainous = h0 > 16;
+  let wanted: SettlementType = t < 0.3 ? 'hamlet' : t < 0.62 ? 'village' : t < 0.85 ? 'town' : 'castle';
+  if (mountainous && t > 0.72) wanted = 'castle';
+  const RADIUS: Record<SettlementType, number> = { hamlet: 30, village: 46, town: 64, castle: 50 };
+  const LIMIT: Record<SettlementType, number> = { hamlet: 14, village: 16, town: 19, castle: 24 };
+  // try the wanted type, then smaller ones if the ground is too rough
+  const order: SettlementType[] =
+    wanted === 'town' ? ['town', 'village', 'hamlet'] : wanted === 'village' ? ['village', 'hamlet'] : wanted === 'castle' ? ['castle', 'hamlet'] : ['hamlet'];
+  let type: SettlementType | null = null;
+  let radius = 0;
+  let sum = h0;
+  for (const cand of order) {
+    const r = RADIUS[cand];
+    let lo = h0;
+    let hi = h0;
+    let acc = h0;
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const h = baseGroundHeightAt(x + Math.cos(a) * r * 0.8, z + Math.sin(a) * r * 0.8);
+      lo = Math.min(lo, h);
+      hi = Math.max(hi, h);
+      acc += h;
+    }
+    if (lo >= WATER_LEVEL + 1.2 && hi - lo <= LIMIT[cand]) {
+      type = cand;
+      radius = r;
+      sum = acc;
+      break;
+    }
+  }
+  if (!type) return null;
+  const avg = sum / 9;
+  const padY = type === 'castle' ? Math.max(avg, h0) + 0.5 : avg;
+  const angle = siteRand(seed, 5) * Math.PI;
+  return {
+    id: `settle_${cx}_${cz}`,
+    cx,
+    cz,
+    x,
+    z,
+    type,
+    radius,
+    padY,
+    angle,
+    seed,
+    name: settlementName(type, seed),
+    streets: buildStreets(type, x, z, radius, angle, seed),
+  };
+}
+
+/** All settlement sites whose centers are within `range` of (x, z). */
+export function settlementsNear(x: number, z: number, range: number): SettlementSite[] {
+  const out: SettlementSite[] = [];
+  const c0x = Math.floor((x - range) / SETTLEMENT_CELL);
+  const c1x = Math.floor((x + range) / SETTLEMENT_CELL);
+  const c0z = Math.floor((z - range) / SETTLEMENT_CELL);
+  const c1z = Math.floor((z + range) / SETTLEMENT_CELL);
+  for (let cz = c0z; cz <= c1z; cz++) {
+    for (let cx = c0x; cx <= c1x; cx++) {
+      const s = getSettlementSite(cx, cz);
+      if (s && Math.hypot(s.x - x, s.z - z) <= range) out.push(s);
+    }
+  }
+  return out;
+}
+
+function siteAt(x: number, z: number): SettlementSite | null {
+  const cx = Math.floor(x / SETTLEMENT_CELL);
+  const cz = Math.floor(z / SETTLEMENT_CELL);
+  for (let dz = -1; dz <= 1; dz++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const s = getSettlementSite(cx + dx, cz + dz);
+      if (s && Math.abs(x - s.x) < s.radius * 1.5 && Math.abs(z - s.z) < s.radius * 1.5) return s;
+    }
+  }
+  return null;
+}
+
+function applySettlementPads(x: number, z: number, base: number): number {
+  if (Math.hypot(x, z) < CORE_EXCLUSION_RADIUS - 80) return base;
+  const s = siteAt(x, z);
+  if (!s) return base;
+  const d = Math.hypot(x - s.x, z - s.z);
+  const outer = s.radius * 1.45;
+  if (d >= outer) return base;
+  const blend = 1 - smoothstep(s.radius * 0.92, outer, d);
+  // gentle crown so rain would run off; keeps the pad from looking machine-flat
+  const crown = (1 - Math.min(1, d / s.radius)) * 0.35 + fbm2D(x * 0.08, z * 0.08, 2) * 0.18;
+  return base * (1 - blend) + (s.padY + crown) * blend;
+}
+
+/** 0..1 street mask inside settlements (drives dirt/cobble road texture and keeps trees off). */
+export function settlementStreetMaskAt(x: number, z: number): number {
+  if (Math.hypot(x, z) < CORE_EXCLUSION_RADIUS - 80) return 0;
+  const s = siteAt(x, z);
+  if (!s) return 0;
+  const d = Math.hypot(x - s.x, z - s.z);
+  if (d > s.radius * 1.2) return 0;
+  let m = 0;
+  for (const st of s.streets) {
+    const { dist } = distToSegment(x, z, st.ax, st.az, st.bx, st.bz);
+    if (dist < st.width + 1.2) m = Math.max(m, 1 - smoothstep(st.width * 0.5, st.width + 1.2, dist));
+  }
+  // open central square / courtyard
+  const sq = s.type === 'town' ? 12 : s.type === 'castle' ? 16 : s.type === 'village' ? 7 : 0;
+  if (sq > 0 && d < sq + 2) m = Math.max(m, 1 - smoothstep(sq * 0.7, sq + 2, d));
+  return m;
+}
+
+/** True when (x, z) is on settled ground where wild trees and rocks should not spawn. */
+export function isSettlementGround(x: number, z: number): boolean {
+  if (Math.hypot(x, z) < CORE_EXCLUSION_RADIUS - 80) return false;
+  const s = siteAt(x, z);
+  return !!s && Math.hypot(x - s.x, z - s.z) < s.radius * 1.15;
 }

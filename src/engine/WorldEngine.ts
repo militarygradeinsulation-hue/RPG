@@ -23,6 +23,7 @@ import {
 } from '../render/MaterialLibrary';
 import { ParticlePool } from '../render/ParticlePool';
 import { CombatFX, FxTarget } from './CombatFX';
+import { SettlementSystem } from '../world/settlements/SettlementSystem';
 import { RenderPipeline } from '../render/RenderPipeline';
 import { SkyAndWeather } from '../render/SkyAndWeather';
 import {
@@ -255,6 +256,7 @@ export class WorldEngine {
   private skyWeather!: SkyAndWeather;
   private particlePool!: ParticlePool;
   private combatFx!: CombatFX;
+  private settlements!: SettlementSystem;
 
   // World Subsystems
   private readonly overworldGroup = new THREE.Group();
@@ -405,6 +407,10 @@ export class WorldEngine {
     private callbacks: WorldCallbacks
   ) {
     this.container = container;
+    // Dev hook: open the game with ?debug to inspect the engine from the console.
+    if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug')) {
+      (window as unknown as { __engine?: WorldEngine }).__engine = this;
+    }
     this.playerState = { ...initial.player };
     this.biomes = initial.biomes;
     this.lastBiomeHealthSnapshot = {
@@ -516,6 +522,14 @@ export class WorldEngine {
     const aniso = Math.min(this.renderer.capabilities.getMaxAnisotropy(), this.tierConfig.anisotropyMax);
     this.stonePbr = createStonePBRTextures(aniso, this.tierConfig.textureResolution);
     this.woodPbr = createWoodPBRTextures(aniso, 512);
+    this.settlements = new SettlementSystem(this.scene, this.origin, this.stonePbr, this.woodPbr, {
+      onDiscover: (site) => {
+        const label = site.type === 'castle' ? 'Castle' : site.type === 'town' ? 'Town' : site.type === 'village' ? 'Village' : 'Hamlet';
+        this.callbacks.onCombatLog(`Discovered ${label}: ${site.name}`, 'quest');
+        soundEngine.triggerCue('quest', site.name);
+      },
+      onBark: (speaker, line) => this.callbacks.onCombatLog(`${speaker}: "${line}"`, 'world'),
+    });
     this.terrainPbr = createTerrainDetailTextures(aniso, 512);
     this.snowSparkleNormal = createSnowSparkleNormalMap(aniso);
     this.snowUniforms.uSnowAmount.value = this.season === 'Winter' ? 1.0 : 0.0;
@@ -2487,7 +2501,7 @@ export class WorldEngine {
       diveHeld: Boolean(keys['KeyC']),
       activeDungeon: this.activeDungeon ? { minX: -18.5, maxX: 18.5, minZ: -44.5, maxZ: 13.0 } : null,
       colliders: this.colliders,
-      extraColliders: this.activeDungeon ? undefined : this.vegetation.colliders,
+      extraColliders: this.activeDungeon ? undefined : this.settlements.colliders.length ? this.vegetation.colliders.concat(this.settlements.colliders) : this.vegetation.colliders,
       iceBridges: this.iceBridges,
       ships: this.ships,
       waveSampler: this.waveSampler,
@@ -2850,7 +2864,7 @@ export class WorldEngine {
       desiredWorldZ: desiredCamZ + oz,
       activeDungeon: this.activeDungeon ? { minX: -18.5, maxX: 18.5, minZ: -44.5, maxZ: 13.0 } : null,
       colliders: this.colliders,
-      extraColliders: this.activeDungeon ? undefined : this.vegetation.colliders,
+      extraColliders: this.activeDungeon ? undefined : this.settlements.colliders.length ? this.vegetation.colliders.concat(this.settlements.colliders) : this.vegetation.colliders,
     });
     this.smoothCamPos.lerp(
       this.tmpCamVec.set(resolvedCamWorld.x - ox, resolvedCamWorld.y, resolvedCamWorld.z - oz),
@@ -2868,6 +2882,9 @@ export class WorldEngine {
       this.camera.position.copy(this.smoothCamPos);
     }
     this.camera.lookAt(this.smoothCamTarget);
+
+    // Settlements: stream buildings and people around the player
+    this.settlements.update(dt, this.playerState.x, this.playerState.z, this.clockState.timeOfDayIndex, !this.activeDungeon);
 
     // 2. Player Procedural Rig Animation (Walk / Swim / Crouch / Block / Attack)
     this.playerModel.group.position.set(plx, rY, plz);

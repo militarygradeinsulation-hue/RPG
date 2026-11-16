@@ -11,6 +11,7 @@ import {
   computeTerrainSlope,
   getBiomeAt,
   getRoadMaskAt,
+  isSettlementGround,
   groundHeightAt,
   hash2,
   WATER_LEVEL,
@@ -236,6 +237,7 @@ export class VegetationSystem {
         const distCenter = Math.hypot(wx, wz);
         if (distCenter < 20) continue; // Keep central shrine stone plaza clear
         if (getRoadMaskAt(wx, wz) > 0.25) continue; // Keep roads clear
+        if (isSettlementGround(wx, wz)) continue; // Keep villages, towns and castle grounds clear
 
         const y = groundHeightAt(wx, wz);
         if (y < WATER_LEVEL + 0.55) continue; // Don't spawn forest trees underwater
