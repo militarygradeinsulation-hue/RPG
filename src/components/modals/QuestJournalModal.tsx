@@ -254,7 +254,7 @@ export const QuestJournalModal: React.FC<QuestJournalModalProps> = ({
                       ))}
                     </ul>
 
-                    {q.status !== 'completed' && q.choices && q.step >= 1 && (
+                    {q.status !== 'completed' && q.choices && q.step >= (q.maxSteps === 3 ? 2 : 1) && (
                       <div className="pt-2 border-t border-white/10 space-y-2">
                         <div className="text-xs font-semibold text-amber-300">Moral Decision Available:</div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
