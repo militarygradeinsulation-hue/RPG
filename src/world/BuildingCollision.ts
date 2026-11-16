@@ -34,6 +34,39 @@ export function resolveBuildingCollision(
     [hw - thickness, -hd, hw, hd],
   ];
 
+  // Continuous swept footprint catches fast movement that skips entirely
+  // through a thin wall between two fixed simulation samples.
+  for (const [x1, z1, x2, z2] of wallSegments) {
+    const loX = x1 - playerRadius;
+    const hiX = x2 + playerRadius;
+    const loZ = z1 - playerRadius;
+    const hiZ = z2 + playerRadius;
+    if (from.x > loX && from.x < hiX && from.z > loZ && from.z < hiZ) continue;
+    const deltaX = current.x - from.x;
+    const deltaZ = current.z - from.z;
+    let entry = 0;
+    let exit = 1;
+    let hitAxis: 'x' | 'z' | null = null;
+    let valid = true;
+    for (const axis of ['x', 'z'] as const) {
+      const start = axis === 'x' ? from.x : from.z;
+      const delta = axis === 'x' ? deltaX : deltaZ;
+      const low = axis === 'x' ? loX : loZ;
+      const high = axis === 'x' ? hiX : hiZ;
+      if (Math.abs(delta) < 1e-8) {
+        if (start < low || start > high) valid = false;
+        continue;
+      }
+      const near = Math.min((low - start) / delta, (high - start) / delta);
+      const far = Math.max((low - start) / delta, (high - start) / delta);
+      if (near > entry) { entry = near; hitAxis = axis; }
+      exit = Math.min(exit, far);
+    }
+    if (!valid || !hitAxis || entry > exit || entry < 0 || entry > 1) continue;
+    if (hitAxis === 'x') current.x = from.x + deltaX * Math.max(0, entry - 0.0001);
+    else current.z = from.z + deltaZ * Math.max(0, entry - 0.0001);
+  }
+
   // Two sweeps let the player slide around corners without crossing the wall.
   // Use the starting side when an oversize movement step reaches a wall.
   for (let pass = 0; pass < 2; pass++) {
