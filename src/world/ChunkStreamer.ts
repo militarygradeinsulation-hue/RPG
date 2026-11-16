@@ -24,6 +24,7 @@ export class ChunkStreamer {
   private chunks: StreamedChunk[] = [];
   private worker: Worker | null = null;
   private jobCounter = 1;
+  private generation = 0;
   private lastCx = 99999;
   private lastCz = 99999;
   private horizonRingMesh: THREE.Mesh | null = null;
@@ -105,7 +106,9 @@ export class ChunkStreamer {
     const cz = Math.round(worldZ / CHUNK_SIZE);
     this.lastCx = cx;
     this.lastCz = cz;
+    this.generation++;
 
+    this.generation++;
     const healths = this.extractHealths(biomes);
     const isWinter = season === 'Winter';
 
@@ -161,6 +164,7 @@ export class ChunkStreamer {
 
     this.lastCx = nextCx;
     this.lastCz = nextCz;
+    this.generation++;
 
     const needed: { cx: number; cz: number }[] = [];
     for (let dz = -this.radius; dz <= this.radius; dz++) {
@@ -201,6 +205,7 @@ export class ChunkStreamer {
     biomes: Record<BiomeId, BiomeState>,
     season: SeasonType
   ): void {
+    this.generation++;
     const healths = this.extractHealths(biomes);
     const isWinter = season === 'Winter';
     this.chunks.forEach((chunk) => {
@@ -224,6 +229,8 @@ export class ChunkStreamer {
     if (this.worker) {
       const req: TerrainWorkerRequest = {
         jobId,
+        generation: this.generation,
+        priority: Math.abs(chunk.cx - this.lastCx) + Math.abs(chunk.cz - this.lastCz),
         cx: chunk.cx,
         cz: chunk.cz,
         centerX: wx,
