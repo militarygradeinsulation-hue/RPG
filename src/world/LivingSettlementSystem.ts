@@ -368,7 +368,10 @@ export class LivingSettlementSystem {
   }
 
   /** Deterministic local rumors that identify each resident and settlement. */
-  public speakToResident(id: string): string | null {
+  public speakToResident(id: string): {
+    message: string; settlementId: string; settlementName: string;
+    biomeId: SettlementPlan['biome'];
+  } | null {
     for (const settlement of this.active.values()) {
       const prefix = `${settlement.plan.id}:resident:`;
       if (!id.startsWith(prefix)) continue;
@@ -386,7 +389,7 @@ export class LivingSettlementSystem {
         scholar: 'The Four Seals are only part of the kingdom\'s oldest story.',
         guard: 'The roads belong to those who protect them. Stay alert outside the village.',
       };
-      return `[${settlement.plan.name} ${role}] ${rumors[role]}`;
+      return { message: `[${settlement.plan.name} ${role}] ${rumors[role]}`, settlementId: settlement.plan.id, settlementName: settlement.plan.name, biomeId: settlement.plan.biome };
     }
     return null;
   }
