@@ -45,7 +45,7 @@ function buildPlan(id: string, x: number, z: number, seed: number, island: boole
   });
   for (let i = 0; i < count; i++) {
     const angle = i * 2.39996 + random(x, z, 12) * Math.PI * 2;
-    const radius = centerClearance + 11 + Math.sqrt(i + 1) * 5.5;
+    const radius = island ? 4.5 + Math.sqrt(i + 1) * 3.6 : centerClearance + 11 + Math.sqrt(i + 1) * 5.5;
     const bx = x + Math.cos(angle) * radius;
     const bz = z + Math.sin(angle) * radius;
     if (groundHeightAt(bx, bz) < 0.9) continue;
@@ -60,6 +60,22 @@ function buildPlan(id: string, x: number, z: number, seed: number, island: boole
       width: kind === 'inn' ? 8 : 5 + random(bx, bz, 15) * 2.8,
       depth: kind === 'inn' ? 8 : 5 + random(bx, bz, 16) * 2,
       floors, seed: variant,
+    });
+  }
+  // An accepted site must never become an empty village. The centre was
+  // already checked for adequate elevation for procedural land settlements.
+  // On named islands, the island peak is the safe fallback location.
+  const minimum = island ? 2 : 1;
+  while (buildings.length < minimum) {
+    const i = buildings.length;
+    const bx = x + (i === 0 ? -2.8 : 3.5);
+    const bz = z + (i === 0 ? 2.7 : -3.3);
+    buildings.push({
+      id: id + ':core:' + i,
+      kind: i === 0 ? 'inn' : 'cottage',
+      x: bx, z: bz, yaw: i * 1.1,
+      width: 5.5 + i, depth: 5.1 + i, floors: i === 0 ? 2 : 1,
+      seed: random(x, z, 30 + i),
     });
   }
   return { id, name, x, z, biome, style, island, buildings, residents: Math.max(2, buildings.length + 1) };
