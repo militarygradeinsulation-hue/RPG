@@ -142,6 +142,31 @@ export const ITEMS: Record<string, ItemDef> = {
     attackBonus: 12,
     spellBonus: 25,
   },
+  moonveil_sigil: {
+    id: 'moonveil_sigil', name: 'Moonveil Sigil', category: 'material',
+    description: 'The ancient lunar covenant sealed into a navigators\' wardstone.',
+    value: 245, rarity: 'Rare',
+  },
+  thornheart_seed: {
+    id: 'thornheart_seed', name: 'Thornheart Seed', category: 'material',
+    description: 'The root-mind\'s living memory. It glows near untouched forests.',
+    value: 270, rarity: 'Rare',
+  },
+  crownfire_ingot: {
+    id: 'crownfire_ingot', name: 'Crownfire Ingot', category: 'material',
+    description: 'A lost forge\'s flawless fire-forged alloy, untouched by rust.',
+    value: 285, rarity: 'Rare',
+  },
+  navigator_chart: {
+    id: 'navigator_chart', name: 'Stormglass Navigator Chart', category: 'material',
+    description: 'An enchanted chart revealing the ocean paths of the First Navigators.',
+    value: 330, rarity: 'Rare',
+  },
+  sapphire_crown: {
+    id: 'sapphire_crown', name: 'Crown of the Sapphire Covenant', category: 'relic',
+    description: 'A mythic token of dominion or unity over the Sapphire Ocean.',
+    value: 980, rarity: 'Mythic', attackBonus: 16, spellBonus: 30,
+  },
 };
 
 export const INITIAL_RECIPES: CraftingRecipe[] = [
