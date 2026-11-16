@@ -3145,7 +3145,7 @@ export class WorldEngine {
       // settlements. Only active nearby world cells are included.
       this.livingSettlements.visibleSettlements.forEach((site) => {
         miniMapEntities.push({
-          id: site.id, kind: 'town', x: site.x, z: site.z,
+          id: site.id, kind: 'outpost', x: site.x, z: site.z,
           color: '#f3c57b', label: site.name,
         });
         compassMarkers.push({
