@@ -882,6 +882,15 @@ export class WorldEngine {
       { kind: 'golem', name: 'Crag Sentinel Golem', x: 62, z: 52 },
       { kind: 'stalker', name: 'Tempest Stalker', x: -12, z: -64 },
       { kind: 'stalker', name: 'Spire Arc Hunter', x: 14, z: -68 },
+      // Frontier guardians are placed outside each island's central waystones.
+      { kind: 'stalker', name: 'Moonveil Oathkeeper', x: -254, z: 341 },
+      { kind: 'wraith', name: 'Moonlit Remnant', x: -297, z: 321 },
+      { kind: 'golem', name: 'Thornheart Sentinel', x: -74, z: 427 },
+      { kind: 'wraith', name: 'Rootbound Shade', x: -112, z: 385 },
+      { kind: 'golem', name: 'Crownfire Guardian', x: 244, z: 383 },
+      { kind: 'stalker', name: 'Ashen Watcher', x: 204, z: 340 },
+      { kind: 'stalker', name: 'Stormglass Harbinger', x: 54, z: 547 },
+      { kind: 'wraith', name: 'Navigator Echo', x: 15, z: 511 },
     ];
     enemySpecs.forEach((es, i) => {
       const parts = createEnemyModel(es.kind);
@@ -2691,6 +2700,15 @@ export class WorldEngine {
       if (e.attackCooldown > 0) e.attackCooldown -= dt;
 
       const dist = Math.hypot(this.playerState.x - e.x, this.playerState.z - e.z);
+      // Hide and sleep remote enemies. Keeps outer island encounters from
+      // consuming draw calls and terrain sampling during mainland gameplay.
+      if (!this.activeDungeon && dist > 155) {
+        if (grp) grp.visible = false;
+        e.windupTimer = 0;
+        if (e.parts) e.parts.telegraphRing.visible = false;
+        continue;
+      }
+      if (grp) grp.visible = true;
       const aggroRange = e.isDragon ? 28 : 19;
       const meleeRange = e.isDragon ? 5.2 : 2.9;
 
